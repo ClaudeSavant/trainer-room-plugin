@@ -8,12 +8,14 @@ import { createRoom } from '/engine/room-instance.mjs';
 import { loadRenderer, probeWebGL, afterContextLoss, fallbackLogArgs, nextFallback } from '/render3d/backend.mjs';
 import { startKeepalive } from '/viewer/keepalive.mjs';
 import { createCountsAdapter, statusView, inviteFromPath, VIEWER_CONFIG, KEEPALIVE_MS, RETRY_MS } from '/viewer/adapter.mjs';
+import { ALL, resolveView, visibleIds, tabItems } from '/viewer/view-mode.mjs';
 
 const ASSET_TIMEOUT_MS = 5000;
 const roomsEl = document.getElementById('rooms');
 const nameEl = document.getElementById('labName');
 const badgeEl = document.getElementById('badge');
 const bannerEl = document.getElementById('banner');
+const tabsEl = document.getElementById('tabs');
 
 const adapter = createCountsAdapter();
 const cards = new Map();   // relay room id -> { room, card, canvas, ctx }
@@ -22,6 +24,9 @@ let bundle = null;
 let rendererState = { kind: '2d', reason: 'booting' };
 let r3d = null;
 let shown = [];            // room ids whose cards are on screen
+let viewMode = ALL;        // ALL (the grid) or one room id filling the window
+let online = false;        // only a live lab can be opened room by room
+let lastTabs = '';
 // Live getters: assets load asynchronously after rooms may already exist.
 const deps = {
   config: VIEWER_CONFIG,
@@ -34,6 +39,7 @@ function fallbackTo2d(next) {
   const state = nextFallback(rendererState, next);
   if (!state) return;
   rendererState = state;
+  for (const entry of cards.values()) { entry.detach3d?.(); entry.detach3d = null; }
   if (r3d) { r3d.hideOverlays(); try { r3d.dispose(); } catch (e) { console.warn('[trainer-room viewer] 3D dispose failed', e); } }
   r3d = null;
   roomsEl.classList.remove('r3d');
@@ -50,14 +56,46 @@ function ensureCard(id) {
   stage.append(canvas, overlayEl);
   card.append(h, stage);
   roomsEl.appendChild(card);
-  const entry = { room: createRoom(id, deps), card, canvas, ctx: canvas.getContext('2d') };
+  const entry = { room: createRoom(id, deps), card, header: h, canvas, ctx: canvas.getContext('2d'), detach3d: null };
   cards.set(id, entry);
+  // In the grid a click opens the room; inside a room, clicks belong to the camera.
+  // Only from the grid: inside a room the camera owns clicks and drags.
+  card.addEventListener('click', () => { if (viewMode === ALL) setView(id); });
   if (r3d) {
-    try { r3d.ensureRoom(id, overlayEl); }
-    catch (error) { fallbackTo2d({ kind: '2d', reason: 'attach-failed', error }); }
+    try {
+      r3d.ensureRoom(id, overlayEl);
+      entry.detach3d = r3d.attachControls(id, canvas, { isSingle: () => viewMode === id, onClick: () => null });
+    } catch (error) { fallbackTo2d({ kind: '2d', reason: 'attach-failed', error }); }
   }
   return entry;
 }
+
+function setView(next) {
+  const prev = viewMode;
+  // Offline or not shared, the rooms are empty: stay on the grid with its banner.
+  viewMode = online ? resolveView(next, shown) : ALL;
+  roomsEl.classList.toggle('single', viewMode !== ALL);
+  if (viewMode !== prev) scrollTo(0, 0);   // a scrolled grid must not leave the room half off-screen
+  renderTabs();
+}
+
+function renderTabs() {
+  const items = tabItems(shown, viewMode, (id) => adapter.labelOf(id), (id) => cards.get(id)?.room.agentCount() ?? 0);
+  tabsEl.hidden = !online || shown.length === 0;
+  const sig = JSON.stringify(items);
+  if (sig === lastTabs) return;
+  lastTabs = sig;
+  tabsEl.replaceChildren(...items.map((it) => {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = it.label;
+    if (it.active) { b.classList.add('active'); b.setAttribute('aria-current', 'true'); }
+    b.addEventListener('click', () => setView(it.id));
+    return b;
+  }));
+}
+
+addEventListener('keydown', (e) => { if (e.key === 'Escape' && viewMode !== ALL) setView(ALL); });
 
 function feed(events) {
   for (const ev of events) ensureCard(ev.project).room.applyEvent(ev);
@@ -68,6 +106,8 @@ function applyState(next) {
   // Offline keeps the last rooms on screen, empty (spec §5); a dead link shows none.
   if (next.online) shown = adapter.rooms();
   if (next.missing) shown = [];
+  online = next.online === true;
+  setView(viewMode);
   const s = statusView(next);
   document.title = `${s.title} · Trainer Room`;
   nameEl.textContent = s.title;
@@ -107,30 +147,44 @@ function frame(now) {
   const dt = now - last; last = now;
   const d = new Date();
   const hour = d.getHours() + d.getMinutes() / 60;
-  const vis = new Set(shown);
+  const vis = new Set(visibleIds(viewMode, shown));
+  const mode = viewMode === ALL ? 'grid' : 'single';
   const S = manifest ? manifest.tileSize : 16;
   const { w: rw, h: rh } = roomPx(ROOM, S);
   for (const [id, entry] of cards) {
     const visible = vis.has(id);
     entry.card.style.display = visible ? '' : 'none';
-    if (!visible) continue;
+    // Hidden rooms still tick, so trainers are where they should be on return.
+    if (!visible) { if (shown.includes(id)) entry.room.tickSim(dt); continue; }
     const { room, canvas, ctx } = entry;
-    canvas.style.width = '';
-    const sizing = canvasSizing(false, 0, 0, rw, rh, canvas.clientWidth || 360);
-    const pr = r3d ? r3d.pixelRatio('grid') : 1;
+    let sizing;
+    if (mode === 'single') {
+      // Fit the whole card in what is left of the window below the header,
+      // banner and tabs, letterboxed like the app's single-room view.
+      const top = roomsEl.getBoundingClientRect().top;
+      const availW = roomsEl.clientWidth - 22;
+      const availH = window.innerHeight - top - 22 - entry.header.offsetHeight;
+      sizing = canvasSizing(true, availW, availH, rw, rh);
+    } else {
+      canvas.style.width = '';
+      sizing = canvasSizing(false, 0, 0, rw, rh, canvas.clientWidth || 360);
+    }
+    canvas.style.width = sizing.styleWidth;
+    const pr = r3d ? r3d.pixelRatio(mode) : 1;
     const bw = Math.round(sizing.width * pr), bh = Math.round(sizing.height * pr);
     if (canvas.width !== bw) canvas.width = bw;
     if (canvas.height !== bh) canvas.height = bh;
     room.tickSim(dt);
     if (r3d) {
-      if (r3d.frameDue(id, now, 'grid')) {
-        try { r3d.renderRoom(id, { snapshot: room.snapshot(now, hour), ctx, canvas, mode: 'grid', now }); }
+      if (r3d.frameDue(id, now, mode)) {
+        try { r3d.renderRoom(id, { snapshot: room.snapshot(now, hour), ctx, canvas, mode, now }); }
         catch (error) { fallbackTo2d({ kind: '2d', reason: 'draw-failed', error }); }
       }
     } else {
       room.render(ctx, canvas, now, hour);
     }
   }
+  renderTabs();   // counts change as trainers come and go; rebuilds only on change
 }
 
 async function boot() {

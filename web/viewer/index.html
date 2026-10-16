@@ -19,6 +19,18 @@
     #get { margin-left: auto; color: #8ecbff; font-size: 11px; white-space: nowrap; }
     #banner { padding: 6px 14px; font-size: 12px; color: #ffd24a; border-bottom: 1px solid #222b38; }
     #banner[hidden] { display: none; }
+    #tabs { display: flex; gap: 6px; padding: 6px 10px; overflow-x: auto; border-bottom: 1px solid #222b38; }
+    #tabs[hidden] { display: none; }
+    #tabs button { font: inherit; font-size: 11px; color: #9aa7b8; background: #161b24;
+      border: 1px solid #222b38; border-radius: 999px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+    #tabs button.active { color: #11151c; background: #6ce67a; border-color: #6ce67a; }
+    #rooms:not(.single) .card { cursor: pointer; }
+    #rooms:not(.single) .card:hover { border-color: #3d6a80; }
+    /* one room fills the window: the stage hugs the letterboxed canvas */
+    #rooms.single { grid-template-columns: 1fr; }
+    #rooms.single .card canvas { height: auto; margin-inline: auto; }
+    #rooms.single .card .stage { width: fit-content; margin-inline: auto; }
+    #rooms.single.r3d .card canvas { cursor: grab; touch-action: none; }   /* touch drags orbit, not scroll */
     #rooms { display: grid; gap: 10px; padding: 10px;
       grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); align-content: start; }
     .card { border: 1px solid #222b38; background: #0d1117; border-radius: 4px; display: flex;
@@ -44,6 +56,7 @@
     <a id="get" href="https://github.com/ClaudeSavant/trainer-room-plugin" target="_blank" rel="noopener noreferrer">Get Trainer Room</a>
   </header>
   <div id="banner" hidden></div>
+  <nav id="tabs" aria-label="Rooms" hidden></nav>
   <main id="rooms"></main>
   <script type="module" src="/viewer/viewer.mjs"></script>
 </body>
