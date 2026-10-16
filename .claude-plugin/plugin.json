@@ -1,0 +1,10 @@
+{
+  "name": "trainer-room",
+  "displayName": "Trainer Room",
+  "description": "A live 3D lab of your Claude Code agents at work. Share your lab by link (room counts only) and visit other people's labs.",
+  "author": { "name": "Claude Savant" },
+  "homepage": "https://github.com/ClaudeSavant/trainer-room-plugin",
+  "repository": "https://github.com/ClaudeSavant/trainer-room-plugin",
+  "license": "MIT",
+  "keywords": ["agents", "visualization", "dashboard", "subagents", "sharing"]
+}

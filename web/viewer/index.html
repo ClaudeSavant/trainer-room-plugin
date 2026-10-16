@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="referrer" content="no-referrer" />
+  <title>Trainer Room</title>
+  <style>
+    html, body { margin: 0; min-height: 100%; background: #11151c; color: #e9eef5;
+      font-family: ui-monospace, Menlo, monospace; }
+    #bar { display: flex; align-items: center; gap: 10px; padding: 8px 14px; font-size: 13px;
+      letter-spacing: 1px; border-bottom: 1px solid #222b38; min-width: 0; }
+    #labName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .badge { font-size: 10px; border-radius: 999px; padding: 1px 8px; color: #11151c;
+      background: #9aa7b8; white-space: nowrap; }
+    .badge-online { background: #6ce67a; }
+    .badge-offline { background: #6b7280; color: #e9eef5; }
+    .badge-not-sharing { background: #ffd24a; }
+    #get { margin-left: auto; color: #8ecbff; font-size: 11px; white-space: nowrap; }
+    #banner { padding: 6px 14px; font-size: 12px; color: #ffd24a; border-bottom: 1px solid #222b38; }
+    #banner[hidden] { display: none; }
+    #rooms { display: grid; gap: 10px; padding: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); align-content: start; }
+    .card { border: 1px solid #222b38; background: #0d1117; border-radius: 4px; display: flex;
+      flex-direction: column; min-width: 0; }
+    .card h2 { margin: 0; padding: 5px 9px; font-size: 12px; letter-spacing: 1px; color: #cfd8e3;
+      border-bottom: 1px solid #222b38; }
+    .card canvas { display: block; width: 100%; image-rendering: pixelated; background: #11151c; }
+    #rooms.r3d .card canvas { image-rendering: auto; }
+    .card .stage { position: relative; }
+    .card .ov { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    .ov-bubble, .ov-label, .ov-overflow { position: absolute; left: 0; top: 0; white-space: nowrap;
+      font: 600 10px/1 ui-monospace, monospace; }
+    .ov-bubble { background: #f8f8f8; color: #1a1f2b; padding: 3px 5px; border-radius: 3px;
+      box-shadow: 0 1px 0 rgba(0,0,0,.35); }
+    .ov-label { font-size: 9px; text-shadow: 0 1px 1px #000; }
+    .ov-overflow { color: #ffd24a; text-shadow: 0 1px 1px #000; }
+  </style>
+</head>
+<body>
+  <header id="bar">
+    <span id="labName">Trainer Room</span>
+    <span id="badge" class="badge badge-connecting">connecting</span>
+    <a id="get" href="https://github.com/ClaudeSavant/trainer-room-plugin" target="_blank" rel="noopener noreferrer">Get Trainer Room</a>
+  </header>
+  <div id="banner" hidden></div>
+  <main id="rooms"></main>
+  <script type="module" src="/viewer/viewer.mjs"></script>
+</body>
+</html>

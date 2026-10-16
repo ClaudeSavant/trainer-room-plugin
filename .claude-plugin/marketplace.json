@@ -1,0 +1,12 @@
+{
+  "name": "trainer-room",
+  "description": "Trainer Room for Claude Code.",
+  "owner": { "name": "Claude Savant" },
+  "plugins": [
+    {
+      "name": "trainer-room",
+      "source": "./",
+      "description": "A live 3D lab of your Claude Code agents at work."
+    }
+  ]
+}

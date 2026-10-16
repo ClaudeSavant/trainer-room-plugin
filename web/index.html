@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Trainer Room</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #11151c; color: #e9eef5;
+      font-family: ui-monospace, Menlo, monospace; }
+    body { display: flex; flex-direction: column; height: 100vh; }
+    #bar { padding: 8px 14px; font-size: 13px; letter-spacing: 1px; border-bottom: 1px solid #222b38; }
+    #sharePill { margin-left: 10px; font-size: 10px; color: #11151c; background: #6ce67a;
+      border-radius: 999px; padding: 1px 8px; letter-spacing: 1px; }
+    #sharePill[hidden] { display: none; }
+    #tabRow { flex: 0 0 auto; display: flex; align-items: center; gap: 6px; padding: 6px 10px;
+      border-bottom: 1px solid #222b38; min-width: 0; }
+    #tabs { flex: 1 1 auto; display: flex; gap: 6px; overflow-x: auto; min-width: 0; }
+    #tabs button { font: inherit; font-size: 11px; color: #9aa7b8; background: #161b24;
+      border: 1px solid #222b38; border-radius: 999px; padding: 3px 12px; cursor: pointer; white-space: nowrap; }
+    #tabs button.active { color: #11151c; background: #6ce67a; border-color: #6ce67a; }
+    #labSwitch { position: relative; flex: 0 0 auto; }
+    #labButton { font: inherit; font-size: 11px; color: #cfe8f5; background: #24424f;
+      border: 1px solid #3d6a80; border-radius: 999px; padding: 3px 12px; cursor: pointer; white-space: nowrap;
+      max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+    #labMenu { position: absolute; left: 0; top: calc(100% + 4px); z-index: 20; min-width: 200px; max-width: 320px;
+      max-height: 60vh; overflow-y: auto; display: flex; flex-direction: column; padding: 4px;
+      background: #0b0f14; border: 1px solid #2b3a2e; border-radius: 6px; box-shadow: 0 8px 40px #000a; }
+    #labMenu[hidden] { display: none; }
+    #labMenu button { font: inherit; font-size: 11px; text-align: left; color: #cfd8e3; background: none;
+      border: 0; border-radius: 4px; padding: 5px 8px; cursor: pointer; white-space: nowrap;
+      overflow: hidden; text-overflow: ellipsis; }
+    #labMenu button:hover, #labMenu button:focus-visible { background: #161b24; outline: none; }
+    #labMenu button.current { color: #6ce67a; }
+    #labMenu hr { border: 0; border-top: 1px solid #1c2630; margin: 4px 0; }
+    #labStatus { display: flex; align-items: center; gap: 10px; padding: 5px 14px; font-size: 12px;
+      border-bottom: 1px solid #222b38; }
+    #labStatus[hidden] { display: none; }
+    #labBanner { color: #ffd24a; }
+    .badge { font-size: 10px; border-radius: 999px; padding: 1px 8px; color: #11151c;
+      background: #9aa7b8; white-space: nowrap; }
+    .badge-online { background: #6ce67a; }
+    .badge-offline { background: #6b7280; color: #e9eef5; }
+    .badge-not-sharing, .badge-reconnecting { background: #ffd24a; }
+    #dirOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex;
+      align-items: center; justify-content: center; z-index: 10; }
+    #dirOverlay[hidden] { display: none; }
+    #dir { width: min(560px, 92vw); max-height: 80vh; display: flex; flex-direction: column;
+      background: #0b0f14; border: 1px solid #2b3a2e; border-radius: 6px; box-shadow: 0 8px 40px #000a; }
+    #dirHead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px;
+      border-bottom: 1px solid #1c2630; color: #6ce67a; font-size: 12px; letter-spacing: 1px; }
+    #dirHead button { background: none; border: none; color: #9aa7b8; font-size: 18px; cursor: pointer; line-height: 1; }
+    #dirList { overflow: auto; padding: 6px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; }
+    .dir-row { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .dir-name { color: #e9eef5; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dir-detail { color: #9aa7b8; white-space: nowrap; }
+    .dir-row button { font: inherit; font-size: 11px; color: #cfe8f5; background: #24424f; border: 1px solid #3d6a80;
+      border-radius: 999px; padding: 1px 10px; cursor: pointer; }
+    .dir-row .dir-actions { margin-left: auto; display: flex; gap: 6px; flex: 0 0 auto; }
+    .dir-note { color: #9aa7b8; }
+    #rooms { flex: 1 1 auto; min-height: 0; overflow: auto; display: grid; gap: 10px; padding: 10px;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); align-content: start; min-width: 0; }
+    /* single-room mode: the one visible card fills the area */
+    #rooms.single { grid-template-columns: 1fr; }
+    /* single-room: JS sets an explicit canvas width that fits the viewport; center it. */
+    #rooms.single .card canvas { height: auto; margin-inline: auto; }
+    /* min-width: 0 so the goal row's nowrap text ellipsizes instead of widening the grid track. */
+    .card { border: 1px solid #222b38; background: #0d1117; border-radius: 4px; display: flex; flex-direction: column; min-width: 0; }
+    .card h2 { margin: 0; padding: 5px 9px; font-size: 12px; letter-spacing: 1px; color: #cfd8e3;
+      border-bottom: 1px solid #222b38; display: flex; justify-content: space-between; }
+    .card canvas { display: block; width: 100%; image-rendering: pixelated; background: #11151c; }
+    .card .stage { position: relative; }
+    /* single room: the stage hugs the letterboxed canvas so overlay coords match it */
+    #rooms.single .card .stage { width: fit-content; margin-inline: auto; }
+    #rooms.r3d .card canvas { image-rendering: auto; }
+    #rooms.single.r3d .card canvas { cursor: grab; }
+    .card .ov { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+    .ov-bubble, .ov-label, .ov-overflow { position: absolute; left: 0; top: 0; white-space: nowrap;
+      font: 600 10px/1 ui-monospace, monospace; }
+    .ov-bubble { background: #f8f8f8; color: #1a1f2b; padding: 3px 5px; border-radius: 3px;
+      box-shadow: 0 1px 0 rgba(0,0,0,.35); }
+    .ov-bubble::after { content: ""; position: absolute; left: 50%; bottom: -4px; margin-left: -4px;
+      border: 4px solid transparent; border-bottom: 0; border-top-color: #f8f8f8; }
+    /* A sleeper's tag carries its label colour, some near-white, so it sits on dark. */
+    .ov-bubble.tag { background: #1a1f2b; }
+    .ov-bubble.tag::after { border-top-color: #1a1f2b; }
+    /* A bubble lifted clear of another keeps a leader down to its trainer. */
+    .ov-bubble.lifted::before { content: ""; position: absolute; left: 50%; top: 100%; width: 1px;
+      height: var(--lift); background: rgba(248,248,248,.75); }
+    .ov-label { font-size: 9px; text-shadow: 0 1px 1px #000; }
+    .ov-overflow { color: #ffd24a; text-shadow: 0 1px 1px #000; }
+    .card .goal { display: block; width: 100%; text-align: left; font: inherit; font-size: 11px;
+      color: #9aa7b8; background: none; border: 0; border-bottom: 1px solid #222b38;
+      padding: 4px 9px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    /* display:block above beats the UA [hidden] rule, so restate it (same as #termOverlay[hidden]). */
+    .card .goal[hidden] { display: none; }
+    .card .goal:hover, .card .goal:focus-visible { color: #cfd8e3; outline: 1px solid #3d6a80; outline-offset: -1px; }
+    .card .goal .caret { color: #6ce67a; }
+    #readmeOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex;
+      align-items: center; justify-content: center; z-index: 10; }
+    #readmeOverlay[hidden] { display: none; }
+    #readme { width: min(760px, 92vw); max-height: 80vh; display: flex; flex-direction: column;
+      background: #0b0f14; border: 1px solid #2b3a2e; border-radius: 6px; box-shadow: 0 8px 40px #000a; }
+    #readmeHead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px;
+      border-bottom: 1px solid #1c2630; color: #6ce67a; font-size: 12px; letter-spacing: 1px; }
+    #readmeHead button { background: none; border: none; color: #9aa7b8; font-size: 18px; cursor: pointer; line-height: 1; }
+    #readmeBody { overflow: auto; padding: 10px 14px; font-size: 12px; line-height: 1.5; color: #cfd8e3; }
+    #readmeBody h1, #readmeBody h2, #readmeBody h3, #readmeBody h4, #readmeBody h5, #readmeBody h6 { color: #e9eef5; margin: 14px 0 6px; }
+    #readmeBody h1 { font-size: 16px; } #readmeBody h2 { font-size: 14px; } #readmeBody h3 { font-size: 13px; }
+    #readmeBody p { margin: 6px 0; }
+    #readmeBody pre { background: #11151c; border: 1px solid #222b38; padding: 6px 8px; overflow-x: auto; }
+    #readmeBody code { color: #8ecbff; }
+    .card .stats { border-top: 1px solid #222b38; padding: 5px 8px; font-size: 10px; line-height: 1.3;
+      display: flex; gap: 14px; overflow-x: auto; }
+    .stats .agent { white-space: pre; }
+    .stats .name { color: #cfd8e3; }
+    .stats .dot-working { color: #6ce67a; } .stats .dot-idle { color: #6b7280; }
+    .stats .mix { margin-left: auto; color: #8ecbff; white-space: pre; }
+    #termOverlay { position: fixed; inset: 0; background: rgba(0,0,0,0.45); display: flex;
+      align-items: center; justify-content: center; z-index: 10; }
+    #termOverlay[hidden] { display: none; }
+    #term { width: min(680px, 90vw); max-height: 70vh; display: flex; flex-direction: column;
+      background: #0b0f14; border: 1px solid #2b3a2e; border-radius: 6px; box-shadow: 0 8px 40px #000a; }
+    #termHead { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px;
+      border-bottom: 1px solid #1c2630; color: #6ce67a; font-size: 12px; letter-spacing: 1px; }
+    #termHead button { background: none; border: none; color: #9aa7b8; font-size: 18px; cursor: pointer; line-height: 1; }
+    #termHead #termTarget { font-size: 11px; letter-spacing: 1px; color: #6ce67a; padding-right: 10px; }
+    #termHead #termDismiss { font-size: 11px; letter-spacing: 1px; color: #ffd24a; padding-right: 10px; }
+    #termBody { margin: 0; padding: 8px 10px; overflow: auto; font-size: 11px;
+      line-height: 1.4; display: flex; flex-direction: column; gap: 4px; }
+    .log-row { display: flex; flex-direction: column; gap: 1px; }
+    .log-meta { display: flex; gap: 8px; font-size: 9px; color: #6b7280; }
+    .log-dir { color: #8ecbff; }
+    .log-text { white-space: pre-wrap; }
+    .log-activity .log-text { color: #6b7280; font-style: italic; }
+    .log-chat .log-text { color: #cfe8d4; background: #16202033; border-left: 2px solid #6ce67a;
+      padding: 3px 6px; border-radius: 0 3px 3px 0; }
+    #main { display: flex; flex: 1 1 auto; min-height: 0; }
+    #console { width: 34%; min-width: 280px; max-width: 560px; display: flex;
+      flex-direction: column; border-left: 1px solid #222b38; background: #0b1a24; }
+    #consoleBody { flex: 1 1 auto; min-height: 0; overflow-y: auto; padding: 8px;
+      font-size: 11px; line-height: 1.45; }
+    #consoleForm { display: flex; align-items: center; gap: 6px; padding: 6px 8px;
+      border-top: 1px solid #1c2630; }
+    #consoleInput { flex: 1; background: transparent; border: 0; outline: 0;
+      color: #cfe8f5; font: inherit; }
+    #consoleChip { background: #24424f; border: 1px solid #3d6a80; color: #cfe8f5;
+      border-radius: 999px; padding: 1px 8px; font: inherit; font-size: 10px; cursor: pointer;
+      white-space: nowrap; }
+    #consoleChip[hidden] { display: none; }
+    /* Console rows are single-line: deliberately NOT .log-row, which is
+       flex-direction: column for the two-line desk-terminal layout (line 43). */
+    .c-row { display: flex; align-items: baseline; gap: 6px; white-space: pre-wrap; }
+    .c-row .row-time { color: #6b7280; flex: 0 0 auto; }
+    .c-row .row-prefix { color: #cfd8e3; flex: 0 0 auto; }
+    .row-activity { color: #6b7280; }
+    .row-chat { color: #cfe8d4; }
+    .row-user { color: #8ecbff; }
+    .row-system { color: #9aa7b8; font-style: italic; }
+    .row-error { color: #ff9f9f; }
+    .row-state { margin-left: auto; font-size: 11px; flex: 0 0 auto; }
+    .state-queued { color: #ffd24a; }
+    .state-delivered { color: #6ce67a; }
+    .state-failed { color: #ff9f9f; }
+    .state-sent { color: #6b7280; }
+  </style>
+</head>
+<body>
+  <div id="bar">TRAINER ROOM — GBA LAB · agents at work<span id="sharePill" hidden>Sharing</span></div>
+  <div id="tabRow">
+    <div id="labSwitch">
+      <button id="labButton" type="button" aria-haspopup="menu" aria-expanded="false">My lab ▾</button>
+      <div id="labMenu" role="menu" hidden></div>
+    </div>
+    <div id="tabs"></div>
+  </div>
+  <div id="labStatus" hidden><span id="labBadge" class="badge"></span><span id="labBanner"></span></div>
+  <div id="main">
+    <div id="rooms"></div>
+    <aside id="console" aria-label="Command console">
+      <div id="consoleBody" role="log" aria-live="polite"></div>
+      <form id="consoleForm">
+        <button type="button" id="consoleChip" hidden></button>
+        <input id="consoleInput" type="text" autocomplete="off" spellcheck="false"
+               placeholder="/help for commands" aria-label="Command input">
+      </form>
+    </aside>
+  </div>
+  <div id="termOverlay" hidden>
+    <div id="term">
+      <div id="termHead"><span id="termTitle"></span><span><button id="termTarget">Target</button><button id="termDismiss">Dismiss</button><button id="termClose" aria-label="Close">×</button></span></div>
+      <div id="termBody"></div>
+    </div>
+  </div>
+  <div id="readmeOverlay" hidden>
+    <div id="readme" role="dialog" aria-modal="true" aria-labelledby="readmeTitle">
+      <div id="readmeHead"><span id="readmeTitle"></span><button id="readmeClose" aria-label="Close">×</button></div>
+      <div id="readmeBody"></div>
+    </div>
+  </div>
+  <div id="dirOverlay" hidden>
+    <div id="dir" role="dialog" aria-modal="true" aria-labelledby="dirTitle">
+      <div id="dirHead"><span id="dirTitle">PUBLIC LABS</span><button id="dirClose" aria-label="Close">×</button></div>
+      <div id="dirList"></div>
+    </div>
+  </div>
+  <script type="module" src="/main.mjs"></script>
+</body>
+</html>

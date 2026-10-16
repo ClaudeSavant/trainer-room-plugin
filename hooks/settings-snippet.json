@@ -1,0 +1,20 @@
+{
+  "_comment": "Merge the hooks block into ~/.claude/settings.json. Replace ABSOLUTE_REPO_PATH with the absolute path to this repo. emit.mjs reads the hook payload from stdin.",
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node ABSOLUTE_REPO_PATH/hooks/emit.mjs" }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node ABSOLUTE_REPO_PATH/hooks/emit.mjs" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node ABSOLUTE_REPO_PATH/hooks/emit.mjs" }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node ABSOLUTE_REPO_PATH/hooks/emit.mjs" }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node ABSOLUTE_REPO_PATH/hooks/emit.mjs" }] }
+    ]
+  }
+}

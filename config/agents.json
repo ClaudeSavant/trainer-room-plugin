@@ -1,0 +1,12 @@
+{
+  "agents": {
+    "backend": { "color": "#4aa3ff", "sprite": "dev-a" },
+    "Backend": { "color": "#4aa3ff", "sprite": "dev-a" },
+    "frontend": { "color": "#ff7ad9", "sprite": "dev-b" },
+    "Frontend": { "color": "#ff7ad9", "sprite": "dev-b" },
+    "codex-reviewer": { "color": "#ffd24a", "sprite": "reviewer" },
+    "reviewer": { "color": "#ffd24a", "sprite": "reviewer" },
+    "lead": { "color": "#e9eef5", "sprite": "professor" }
+  },
+  "palette": ["#4aa3ff", "#ff7ad9", "#ffd24a", "#6ce67a", "#c98aff", "#ff9f4a"]
+}

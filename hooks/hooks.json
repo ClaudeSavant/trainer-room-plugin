@@ -1,0 +1,20 @@
+{
+  "description": "Trainer Room: stream agent activity to your local lab view.",
+  "hooks": {
+    "PostToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs", "--plugin"], "async": true, "timeout": 10 }] }
+    ],
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs", "--plugin"], "async": true, "timeout": 10 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs", "--plugin"], "async": true, "timeout": 10 }] }
+    ],
+    "SubagentStop": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs", "--plugin"], "async": true, "timeout": 10 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "node", "args": ["${CLAUDE_PLUGIN_ROOT}/hooks/emit.mjs", "--plugin"], "async": true, "timeout": 10 }] }
+    ]
+  }
+}

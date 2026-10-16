@@ -1,0 +1,41 @@
+{
+  "tileSize": 16,
+  "tileset": {
+    "image": "tileset.png",
+    "tiles": {
+      "floor": [0, 0],
+      "wall": [1, 0],
+      "machine": [2, 0],
+      "window": [3, 0],
+      "bookshelf": [4, 0],
+      "desk": [5, 0],
+      "console": [6, 0],
+      "floor2": [7, 0],
+      "floor3": [8, 0],
+      "bed": [9, 0]
+    }
+  },
+  "items": {
+    "image": "items.png",
+    "sprites": {
+      "token": [0, 0],
+      "doc": [1, 0],
+      "parcel": [2, 0],
+      "deliverable": [3, 0]
+    }
+  },
+  "characters": {
+    "frameW": 16,
+    "frameH": 24,
+    "dirs": ["down", "left", "right", "up"],
+    "sleepRow": 4,
+    "walkFrames": 4,
+    "sheets": {
+      "professor": "characters/professor.png",
+      "dev-a": "characters/dev-a.png",
+      "dev-b": "characters/dev-b.png",
+      "reviewer": "characters/reviewer.png",
+      "npc": "characters/npc.png"
+    }
+  }
+}
