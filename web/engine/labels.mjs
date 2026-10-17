@@ -7,10 +7,10 @@ export function trimCaption(s) {
 }
 
 // Bubble text for a trainer, or null when no bubble should show: never over an
-// idle trainer, a sleeper, or one already heading to bed.
+// idle trainer.
 export function captionFor(t, a) {
   if (!t || !a) return null;
-  if (t.status === 'idle' || t.status === 'sleeping' || t.pendingSleep || !a.caption) return null;
+  if (t.status === 'idle' || !a.caption) return null;
   return trimCaption(a.caption);
 }
 

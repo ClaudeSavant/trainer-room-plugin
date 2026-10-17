@@ -77,10 +77,9 @@ const C = {
   paper: [207, 216, 227], docBlue: [142, 203, 255], docLine: [70, 120, 170],
   parcel: [216, 162, 90], parcelTape: [150, 110, 55],
   skin: [240, 200, 160], shadow: [0, 0, 0, 90],
-  bedFrame: [120, 96, 60], bedSheet: [207, 216, 227], pillow: [245, 245, 245], blanket: [110, 150, 210],
 };
 
-// ---- TILESET (9 tiles x 1 row, 16x16 each) --------------------------------
+// ---- TILESET (10 tiles x 1 row, 16x16 each) --------------------------------
 function drawFloor(s, ox, oy) {
   s.rect(ox, oy, 16, 16, C.floor);
   for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++)
@@ -136,12 +135,11 @@ function drawDesk(s, ox, oy) {
   s.rect(ox, oy + 13, 16, 3, C.deskLo);
   s.rect(ox + 2, oy + 6, 5, 4, C.deskLo); // drawer hint
 }
-function drawBed(s, ox, oy) {
-  // horizontal bed spanning a 16x16 tile (left half = pillow, rest = blanket)
-  s.rect(ox, oy + 3, 16, 11, C.bedFrame);          // frame
-  s.rect(ox + 1, oy + 4, 14, 9, C.bedSheet);       // mattress
-  s.rect(ox + 1, oy + 4, 5, 9, C.pillow);          // pillow (left)
-  s.rect(ox + 6, oy + 6, 9, 6, C.blanket);         // blanket (right)
+function drawDoor(s, ox, oy) {
+  // doorway in the right wall: floor-toned opening with a frame at the wall edge
+  drawFloor(s, ox, oy);
+  s.rect(ox + 12, oy, 4, 16, C.frame);             // door frame (wall side)
+  s.rect(ox + 13, oy, 2, 16, C.shelfDark);         // threshold shadow
 }
 function drawConsole(s, ox, oy) {
   s.rect(ox, oy, 16, 16, C.consoleBody);
@@ -151,8 +149,8 @@ function drawConsole(s, ox, oy) {
   s.rect(ox + 7, oy + 9, 2, 6, C.red);
   s.rect(ox + 5, oy + 11, 6, 2, C.red);
 }
-function buildTileset() {
-  const tiles = [drawFloor, drawWall, drawMachine, drawWindow, drawBookshelf, drawDesk, drawConsole, drawFloor2, drawFloor3, drawBed];
+export function buildTileset() {
+  const tiles = [drawFloor, drawWall, drawMachine, drawWindow, drawBookshelf, drawDesk, drawConsole, drawFloor2, drawFloor3, drawDoor];
   const s = surface(tiles.length * 16, 16);
   tiles.forEach((fn, i) => fn(s, i * 16, 0));
   return s;

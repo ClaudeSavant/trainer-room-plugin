@@ -4,7 +4,7 @@ export function roomKey(ev) {
   return (ev && ev.project) || 'unknown';
 }
 
-// Display name for a room key (which is now a full cwd path): its basename.
+// Display name for a room key (an absolute project-root path): its basename.
 export function projectLabel(key) {
   if (!key || key === 'unknown') return 'unknown';
   const p = String(key).replace(/[\\/]+$/, '').split(/[\\/]/);
@@ -56,12 +56,24 @@ export function scrubEvent(ev) {
 }
 
 // Last-resort display label when neither /api/project nor a SessionStart label
-// is known. Transcript slugs start with '-' and must never be shown raw.
-// '(no project)' mirrors NO_PROJECT in hooks/project.mjs (web cannot import hooks/).
+// is known. Keys are absolute project-root paths, so this shows only the
+// basename, never the path. Old transcript-slug keys start with '-' and must
+// never be shown raw. '(no project)' mirrors NO_PROJECT in hooks/project.mjs
+// (web cannot import hooks/).
 export function fallbackLabel(key) {
   if (key === '(no project)') return key;
   if (typeof key === 'string' && key.startsWith('-')) return '(unknown project)';
   return projectLabel(key);
+}
+
+// Whether a trainer seen in a room walks in through the door (true) or is placed
+// at its desk (false). Only a genuinely new session walks in: a live SessionStart,
+// a live switch from another room, or a live first entry into a room by a session
+// already seen with none (`entered`, from createSessionRooms). Anything replayed —
+// the reload snapshot, or a visited room's first batch — is placed seated, so a
+// reload is no parade.
+export function arrivalFor({ fromSnapshot, type, switched, entered = false }) {
+  return !fromSnapshot && (type === 'agent_start' || switched === true || entered === true);
 }
 
 // Owner ruling "folder after repo": same-repo rooms (worktrees) are told apart

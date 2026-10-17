@@ -1,10 +1,12 @@
-// Resolves a room key (an opaque transcript slug, see hooks/project.mjs) to what
+// Resolves a room key (an absolute project-root path from hooks/project.mjs, or
+// a legacy opaque transcript slug) to what
 // the page shows about a project: GitHub owner/repo, a folder label, a one-line
 // goal and the README text. Local disk only, no network. The slug is never
 // unslugified; the launch folder comes from the session transcript itself.
+// Path keys are only honoured under the home dir (isProjectPath).
 // Nothing returned contains a file-system path.
 import { readdirSync, statSync, lstatSync, readFileSync, existsSync, openSync, readSync, closeSync, constants as fsc } from 'node:fs';
-import { join, dirname, basename, resolve } from 'node:path';
+import { join, dirname, basename, resolve, isAbsolute } from 'node:path';
 import { homedir } from 'node:os';
 
 export const DEFAULT_PROJECTS_DIR = join(homedir(), '.claude', 'projects');
@@ -18,6 +20,16 @@ const PARA_CAP = 2000;
 
 export function isSlug(key) {
   return typeof key === 'string' && SLUG_RE.test(key) && key !== '.' && key !== '..';
+}
+
+// A room key from the hook: an absolute project-root path under the user's home
+// that exists as a directory. Normalised (no '..', no trailing slash) so a key
+// can never reach outside home, and home itself is not a project.
+export function isProjectPath(key, homeDir = homedir()) {
+  if (typeof key !== 'string' || !key || !isAbsolute(key) || resolve(key) !== key) return false;
+  const home = trimSlash(homeDir);
+  if (!key.startsWith(home + '/')) return false;
+  try { return statSync(key).isDirectory(); } catch { return false; }
 }
 
 function readHead(path, bytes, flags = 'r') {
@@ -149,14 +161,19 @@ function findReadme(dir) {
   return null;
 }
 
-export function resolveProjectInfo(key, { projectsDir = DEFAULT_PROJECTS_DIR, home = homedir() } = {}) {
-  if (!isSlug(key)) return null;
-  const slugDir = join(projectsDir, key);
-  try { if (!statSync(slugDir).isDirectory()) return null; } catch { return null; }
-  const raw = launchCwd(slugDir, key);
+export function resolveProjectInfo(key, { projectsDir = DEFAULT_PROJECTS_DIR, home = homedir(), homeDir: homeOpt = home } = {}) {
+  const homeDir = trimSlash(homeOpt);
+  let raw;
+  if (isProjectPath(key, homeDir)) {
+    raw = key;                       // path key: the key is the project root
+  } else {
+    if (!isSlug(key)) return null;
+    const slugDir = join(projectsDir, key);
+    try { if (!statSync(slugDir).isDirectory()) return null; } catch { return null; }
+    raw = launchCwd(slugDir, key);
+  }
   if (!raw) return null;
   const cwd = trimSlash(raw);
-  const homeDir = trimSlash(home);
   // / or the home dir is not a project: no label worth showing.
   if (cwd === '/' || cwd === homeDir) return null;
   // A deleted/moved launch folder must not walk up into some parent repo.

@@ -12,8 +12,9 @@ export const ROOM = {
     ] },
     { name: 'side-walls', cells: [
       ...range(1, 12).map((row) => cell(0, row, 'bookshelf')),
-      ...range(1, 12).map((row) => cell(19, row, 'bookshelf')),
-      ...range(1, 19).map((col) => cell(col, 11, 'bookshelf')),
+      ...range(1, 9).map((row) => cell(19, row, 'bookshelf')),
+      cell(19, 9, 'door'), cell(19, 10, 'door'),
+      ...range(1, 20).map((col) => cell(col, 11, 'bookshelf')),
     ] },
     { name: 'fixtures', cells: [ cell(16, 8, 'console') ] },
   ],

@@ -2,7 +2,8 @@ import { loadImages, browserLoad, withTimeout } from '/engine/assets.mjs';
 import { roomPx, canvasSizing, roomFrame } from '/engine/tilemap.mjs';
 import { ROOM } from '/engine/room.mjs';
 import { createRoom } from '/engine/room-instance.mjs';
-import { roomKey, applySeq, visibleRooms, emptyRoomKeys, scrubEvent, fallbackLabel, displayLabel } from '/engine/routing.mjs';
+import { roomKey, applySeq, visibleRooms, scrubEvent, fallbackLabel, displayLabel, arrivalFor } from '/engine/routing.mjs';
+import { createSessionRooms } from '/engine/session-rooms.mjs';
 import { parseMarkdown } from '/console/markdown.mjs';
 import { parseCommand } from '/console/parse.mjs';
 import { sharePillText } from '/console/share-pill.mjs';
@@ -43,6 +44,9 @@ const roomsEl = document.getElementById('rooms');
 // Two room maps (sharing spec §5): the owner's own rooms always receive events;
 // visited rooms exist only while a lab is on screen. `rooms` is whichever is shown.
 const myRooms = new Map();    // project -> { room, card, canvas, ctx, count, … }
+// Which room each owner session is in (spec items 8-9): a session follows its
+// project, moving only on a work event in another one.
+const sessionRooms = createSessionRooms();
 const visitRooms = new Map(); // 'lab:<room id>' -> the same shape, presence-only
 let rooms = myRooms;
 let activeLab = { kind: MINE };
@@ -256,12 +260,15 @@ document.getElementById('termTarget').addEventListener('click', () => {
 });
 
 // A main session is reap-exempt for 72h, so one whose SessionEnd never arrived
-// would sleep in the barracks until then. This is the manual way out.
+// would keep its desk until then. This is the manual way out: it walks the
+// trainer out through the door. The router forgets the session too (dismiss is
+// not reported through onRemoved), so a later event places it afresh.
 document.getElementById('termDismiss').addEventListener('click', () => {
   if (!openTerm) return;
   const entry = myRooms.get(openTerm.project);
   if (entry && entry.room.dismiss(openTerm.session)) {
-    pushLine({ ts: new Date().toISOString(), kind: 'system', text: `dismissed ${openTerm.name}` });
+    sessionRooms.forget(openTerm.session);
+    pushLine({ ts: new Date().toISOString(), kind: 'system', text: `${openTerm.name} dismissed — walking out` });
   }
   closeTerm();
 });
@@ -688,6 +695,10 @@ function ensureRoom(project) {
     get manifest() { return manifest; },
     get bundle() { return bundle; },
     statsEl,
+    // A reaped or restart-cleared session leaves its room in the router too, so
+    // its next event (if any) places it afresh instead of routing to a stale
+    // room — and, being vacated rather than forgotten, it walks in.
+    onRemoved: (session) => sessionRooms.vacate(session),
   };
   const entry = { room: createRoom(project, deps), card, canvas, ctx: canvas.getContext('2d'), overlayEl, detach3d: null, count, header: h, title, goal, goalText, statsEl, lastEventTs: Date.now(), lastReapCheck: Date.now() };
   canvas.addEventListener('click', (e) => {
@@ -742,15 +753,21 @@ function ensureVisitRoom(key) {
   return entry;
 }
 
+// A visited lab has no SessionStart history (spec: reload/restart), so a room's
+// first batch is its snapshot and is placed seated; after that a new visitor
+// (agent_start) walks in.
 function feedVisit(events) {
+  const known = new Set(visitRooms.keys());
   for (const ev of events) {
     const entry = ensureVisitRoom(ev.project);
     entry.lastEventTs = Date.now();
-    entry.room.applyEvent(ev);
+    entry.room.applyEvent(ev, { arrive: arrivalFor({ fromSnapshot: !known.has(ev.project), type: ev.type, switched: false }) });
   }
 }
 
-function handle(ev) {
+// `fromSnapshot`: the event is replayed history (the bridge's snapshot on load
+// or reconnect), so a trainer first seen in it is placed seated (spec anti-goal 1).
+function handle(ev, { fromSnapshot = false } = {}) {
   // M2: discard malformed events so one bad line can't freeze the page.
   if (!ev || typeof ev.agent !== 'string' || ev.agent.length === 0 || typeof ev.type !== 'string') return;
   ev = scrubEvent(ev);   // no file-system paths reach any display (spec §3)
@@ -758,29 +775,37 @@ function handle(ev) {
   const d = applySeq(lastSeq, ev);
   if (!d.apply) return;
   lastSeq = d.lastSeq;
-  const key = roomKey(ev);
+  // The label describes the event's own project, which is not always the room
+  // the session sits in (a SessionStart elsewhere does not move it).
   // Before ensureRoom: the card title is written once at creation, so the label
   // has to be cached by the time the room is first materialized.
   // typeof, not truthiness: labelFor widened what a label may be. routing's projectLabel
   // used to String() every key on its way out, so a non-string could never reach
   // parse.mjs; a cached 42 renders a "42" tab fine but throws out of resolve()'s
   // keyOf(...).toLowerCase on the next /focus. Same posture as the M2 guard above.
-  if (typeof ev.projectLabel === 'string' && ev.projectLabel) rememberLabel(key, ev.projectLabel);
-  const entry = ensureRoom(key);
-  if (ev.type === 'agent_start') { infoRetried.delete(key); loadProjectInfo(key); }   // retry a 404'd room on SessionStart
-  entry.lastEventTs = Date.now();
-  entry.room.applyEvent(ev);
+  if (typeof ev.projectLabel === 'string' && ev.projectLabel) rememberLabel(roomKey(ev), ev.projectLabel);
+  const { room: key, from, entered, ev: routed } = sessionRooms.route(ev);
+  // A switch: the trainer walks out of its old room (keeping nothing there) and
+  // into the new one below. route() already carried its main flag over. A switch
+  // replayed from the snapshot is history: it leaves at once, no walk-out.
+  if (from !== null) myRooms.get(from)?.room.depart(routed.session || routed.agent, { instant: fromSnapshot });
+  // Every event reaches the console, including those of a session with no room yet.
   pushLine({
     ts: ev.ts, agent: ev.agent,
     kind: ev.type === 'chat' ? 'chat' : 'activity',
     text: ev.detail ?? ev.summary ?? ev.type,
   });
+  if (key === null) return;   // no project yet (or a SessionEnd for a session never seen)
+  const entry = ensureRoom(key);
+  if (ev.type === 'agent_start') { infoRetried.delete(key); loadProjectInfo(key); }   // retry a 404'd room on SessionStart
+  entry.lastEventTs = Date.now();
+  entry.room.applyEvent(routed, { arrive: arrivalFor({ fromSnapshot, type: ev.type, switched: from !== null, entered }) });
 }
 
 function connect() {
   const es = new EventSource('/api/events');
   es.addEventListener('snapshot', (m) => {
-    try { for (const ev of JSON.parse(m.data)) handle(ev); }
+    try { for (const ev of JSON.parse(m.data)) handle(ev, { fromSnapshot: true }); }
     catch (err) { console.warn('bad snapshot', err); }
   });
   es.onmessage = (m) => {
@@ -797,19 +822,20 @@ function loop(now) {
   const dt = now - last; last = now;
   const wall = Date.now();
   const hour = currentHour();
-  // Every agent for a project has ended -> the room is gone, not just idle.
-  // Sweep before computing keys/vis below so a removed selected-tab room
-  // never leaves the dashboard blank for a frame.
+  const reducedMotion = reducedMotionMq.matches;   // read once per frame
+  // Every agent for a project has ended and the last one is through the door ->
+  // the room is gone, not just idle. Sweep before computing keys/vis below so a
+  // removed selected-tab room never leaves the dashboard blank for a frame.
   for (const map of [myRooms, visitRooms]) {
-    const counts = {};
-    for (const [key, entry] of map) counts[key] = entry.room.agentCount();
-    for (const key of emptyRoomKeys(counts)) dropCard(map, key);
+    for (const [key, entry] of [...map]) if (entry.room.isEmpty()) dropCard(map, key);
   }
   // The hidden lab's cards stay out of the grid (own rooms keep their state).
   if (rooms !== myRooms) for (const entry of myRooms.values()) entry.card.style.display = 'none';
   if (rooms !== myRooms) {
     for (const entry of myRooms.values()) {
       if (wall - entry.lastReapCheck > REAP_CHECK_MS) { entry.lastReapCheck = wall; entry.room.reapTick(wall); }
+      // A switch animates off screen too, so the old room can empty and close.
+      if (entry.room.hasMotion()) entry.room.tickSim(dt);
     }
   }
   // Don't strand the user on a dead channel. Check the chip's OWN room: this
@@ -852,7 +878,10 @@ function loop(now) {
       entry.lastReapCheck = wall;
       entry.room.reapTick(wall);
     }
-    if (!visible) continue;   // hidden rooms keep their state (events still routed) but don't tick/render
+    // Hidden rooms keep their state (events still routed) but don't render; they
+    // tick only while someone is walking, so a switch out of a room not on
+    // screen still finishes and the room closes.
+    if (!visible) { if (entry.room.hasMotion()) entry.room.tickSim(dt); continue; }
     const { room, canvas, ctx, count } = entry;
     // size each canvas to its card width at the room's aspect ratio. Sizing runs
     // BEFORE the idle guard below so selecting an idle project's tab still
@@ -887,8 +916,9 @@ function loop(now) {
     // no CPU/DOM on sim — sizing above already ran so an idle-but-visible room is
     // still correctly letterboxed. An idle room still draws (without ticking)
     // when its backing store was just cleared by a resize, and in 3D while the
-    // user is orbiting/zooming it or its camera is still settling.
-    const { simulate } = roomFrame(wall - entry.lastEventTs > ROOM_IDLE_MS);
+    // user is orbiting/zooming it or its camera is still settling. A room with
+    // someone walking never pauses, so a walk-out finishes and the room can close.
+    const { simulate } = roomFrame(wall - entry.lastEventTs > ROOM_IDLE_MS && !room.hasMotion());
     if (simulate) room.tickSim(dt);
     if (r3d) {
       const mode = viewMode === 'all' ? 'grid' : 'single';
@@ -905,7 +935,7 @@ function loop(now) {
       if (simulate && entry.statsEl) room.tickStats(now);
     } else if (wants2dDraw({ simulate, resized, repaint: entry.repaint2d })) {
       entry.repaint2d = false;
-      room.render(ctx, canvas, now, hour);
+      room.render(ctx, canvas, now, hour, { reducedMotion });
     }
     if (!simulate) continue;
     count.textContent = `${room.agentCount()} agents`;

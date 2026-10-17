@@ -5,12 +5,14 @@ import { loadImages, browserLoad, withTimeout } from '/engine/assets.mjs';
 import { roomPx, canvasSizing } from '/engine/tilemap.mjs';
 import { ROOM } from '/engine/room.mjs';
 import { createRoom } from '/engine/room-instance.mjs';
+import { arrivalFor } from '/engine/routing.mjs';
 import { loadRenderer, probeWebGL, afterContextLoss, fallbackLogArgs, nextFallback } from '/render3d/backend.mjs';
 import { startKeepalive } from '/viewer/keepalive.mjs';
 import { createCountsAdapter, statusView, inviteFromPath, VIEWER_CONFIG, KEEPALIVE_MS, RETRY_MS } from '/viewer/adapter.mjs';
 import { ALL, resolveView, visibleIds, tabItems } from '/viewer/view-mode.mjs';
 
 const ASSET_TIMEOUT_MS = 5000;
+const reducedMotionMq = matchMedia('(prefers-reduced-motion: reduce)');
 const roomsEl = document.getElementById('rooms');
 const nameEl = document.getElementById('labName');
 const badgeEl = document.getElementById('badge');
@@ -97,8 +99,24 @@ function renderTabs() {
 
 addEventListener('keydown', (e) => { if (e.key === 'Escape' && viewMode !== ALL) setView(ALL); });
 
+// No SessionStart history reaches the viewer, so a room's first batch is its
+// snapshot and is placed seated; after that a new visitor walks in.
 function feed(events) {
-  for (const ev of events) ensureCard(ev.project).room.applyEvent(ev);
+  const known = new Set(cards.keys());
+  for (const ev of events) {
+    const fromSnapshot = !known.has(ev.project);
+    ensureCard(ev.project).room.applyEvent(ev, { arrive: arrivalFor({ fromSnapshot, type: ev.type, switched: false }) });
+  }
+}
+
+// A room that left the lab closes once its last trainer is through the door.
+// Rooms still listed (an offline lab keeps its last rooms on screen) stay.
+function dropCard(id) {
+  const entry = cards.get(id);
+  entry.detach3d?.();
+  r3d?.dropRoom(id);
+  entry.card.remove();
+  cards.delete(id);
 }
 
 function applyState(next) {
@@ -151,11 +169,15 @@ function frame(now) {
   const mode = viewMode === ALL ? 'grid' : 'single';
   const S = manifest ? manifest.tileSize : 16;
   const { w: rw, h: rh } = roomPx(ROOM, S);
-  for (const [id, entry] of cards) {
-    const visible = vis.has(id);
+  const reducedMotion = reducedMotionMq.matches;   // read once per frame
+  for (const [id, entry] of [...cards]) {
+    if (!shown.includes(id) && entry.room.isEmpty()) { dropCard(id); continue; }
+    // A room that just left the lab stays in the grid while its trainers walk out.
+    const visible = vis.has(id) || (online && viewMode === ALL && !shown.includes(id));
     entry.card.style.display = visible ? '' : 'none';
-    // Hidden rooms still tick, so trainers are where they should be on return.
-    if (!visible) { if (shown.includes(id)) entry.room.tickSim(dt); continue; }
+    // Hidden rooms still tick, so trainers are where they should be on return
+    // and a room that left finishes walking out and closes.
+    if (!visible) { entry.room.tickSim(dt); continue; }
     const { room, canvas, ctx } = entry;
     let sizing;
     if (mode === 'single') {
@@ -181,7 +203,7 @@ function frame(now) {
         catch (error) { fallbackTo2d({ kind: '2d', reason: 'draw-failed', error }); }
       }
     } else {
-      room.render(ctx, canvas, now, hour);
+      room.render(ctx, canvas, now, hour, { reducedMotion });
     }
   }
   renderTabs();   // counts change as trainers come and go; rebuilds only on change
@@ -205,7 +227,7 @@ async function boot() {
   if (rendererState.kind === '3d') {
     try {
       r3d = rendererState.mod.createRenderer3d({
-        reducedMotion: () => matchMedia('(prefers-reduced-motion: reduce)').matches,
+        reducedMotion: () => reducedMotionMq.matches,
         onContextLost: () => fallbackTo2d(afterContextLoss(rendererState)),
       });
       roomsEl.classList.add('r3d');

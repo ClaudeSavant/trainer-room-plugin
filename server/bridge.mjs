@@ -1,10 +1,11 @@
 import { createServer as createHttp } from 'node:http';
 import { readFileSync, existsSync, readFile } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { homedir } from 'node:os';
 import { dirname, join, normalize, extname, relative, isAbsolute } from 'node:path';
 import { tailLines } from './tail.mjs';
 import { createWorld, applyEvent } from '../web/sim/world.mjs';
-import { resolveProjectInfo, isSlug, DEFAULT_PROJECTS_DIR } from './project-info.mjs';
+import { resolveProjectInfo, isSlug, isProjectPath, DEFAULT_PROJECTS_DIR } from './project-info.mjs';
 import { createShare, DEFAULT_RELAY, STOPPED } from './share/index.mjs';
 import { trainerRoomHome } from '../hooks/paths.mjs';
 import { createLabs } from './labs/index.mjs';
@@ -15,7 +16,7 @@ const WEB_DIR = join(REPO_ROOT, 'web');
 const MIME = { '.html': 'text/html', '.mjs': 'text/javascript', '.js': 'text/javascript', '.css': 'text/css', '.png': 'image/png' };
 const VERSION = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf8')).version;
 
-export function createServer({ eventsPath, replayFile, port = 0, projectsDir = DEFAULT_PROJECTS_DIR, share: shareOpts = null, labs: labsOpts = null } = {}) {
+export function createServer({ eventsPath, replayFile, port = 0, projectsDir = DEFAULT_PROJECTS_DIR, homeDir = homedir(), share: shareOpts = null, labs: labsOpts = null } = {}) {
   let world = createWorld();
   const recent = [];            // recent events for snapshot (cap 200)
   const clients = new Set();
@@ -29,18 +30,18 @@ export function createServer({ eventsPath, replayFile, port = 0, projectsDir = D
 
   // /api/project results are disk reads (transcript head, git config, README),
   // so cache briefly. 30s means a README edit shows up on the next page fetch
-  // after at most half a minute. Bounded: only slug-shaped keys are cached and
+  // after at most half a minute. Bounded: only slug- or path-shaped keys are cached and
   // the map is cleared if it ever grows past 500. Misses are NOT cached: a new
   // session's first lookup can 404 before its transcript exists, and caching
   // that would hide the project for the whole TTL.
   const INFO_TTL_MS = 30 * 1000;
   const infoCache = new Map();   // key -> { at, info }
   function projectInfo(key) {
-    if (!isSlug(key)) return null;
+    if (!isSlug(key) && !isProjectPath(key, homeDir)) return null;
     const hit = infoCache.get(key);
     if (hit && Date.now() - hit.at < INFO_TTL_MS) return hit.info;
     let info = null;
-    try { info = resolveProjectInfo(key, { projectsDir }); } catch { /* treat as unknown */ }
+    try { info = resolveProjectInfo(key, { projectsDir, homeDir }); } catch { /* treat as unknown */ }
     if (!info) { infoCache.delete(key); return null; }
     if (infoCache.size > 500) infoCache.clear();
     infoCache.set(key, { at: Date.now(), info });

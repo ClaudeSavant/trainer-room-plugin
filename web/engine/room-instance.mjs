@@ -1,13 +1,15 @@
 // A self-contained per-project Trainer Room: its own world, stats, desk
 // assignment, trainers and fx. One Room never reads/mutates another's state.
 //
-// deps: { config, manifest, bundle, statsEl, presenceOnly? }. `config`/`manifest`/`bundle` may be
+// deps: { config, manifest, bundle, statsEl, presenceOnly?, onRemoved? }. `config`/`manifest`/`bundle` may be
 // live getters (assets load asynchronously), so we read them off `deps` at use
 // time rather than destructuring once — this keeps the Room reading current
 // values after the async asset load without buffering events.
+// `onRemoved(session)` fires when the room itself drops a session (stale reap
+// or the room-restart rule), never for a caller's own depart() or a SessionEnd.
 import { createWorld, applyEvent as applyWorldEvent, tierFor, reapStale, REAP_AFTER_MS } from '../sim/world.mjs';
-import { createTrainer, onEvent, tick, frameFor } from '../sim/trainer.mjs';
-import { deskStand, deskRect, spawnPoint, assignDesks, MAX_DESKS, deskTileCells, barracksBunkTileCells, barracksBunkLie, deskSlotAt } from './layout.mjs';
+import { createTrainer, createSeated, arrive, leave, isWorking, onEvent, tick, frameFor } from '../sim/trainer.mjs';
+import { deskStand, deskRect, assignDesks, MAX_DESKS, deskTileCells, deskSlotAt, DOOR_OUTSIDE, arrivalPath, exitPath, returnPath } from './layout.mjs';
 import { colorForAgent, drawTrainer, drawTrainerShadow, drawItem, resolveSprite } from './sprites.mjs';
 import { captionFor, trainerLabel, nameCensus } from './labels.mjs';
 import { ROOM, FIXTURES } from './room.mjs';
@@ -17,6 +19,7 @@ import { drawBubble } from './bubble.mjs';
 import { createCelebration, drawCelebration, isExpired, blinkOn, celebrationProgress } from './fx.mjs';
 import { createStats, accumulate } from '../sim/stats.mjs';
 import { buildStatsView } from './statsview.mjs';
+import { screenColor } from './monitor.mjs';
 
 const ROLE_ORDER = ['lead', 'Backend', 'Frontend', 'reviewer'];
 
@@ -35,6 +38,10 @@ export function createRoom(project, deps) {
   const frameClock = new Map(); // session -> ms accumulator
   const fxByAgent = new Map();  // session -> celebration[]
   const feeds = new Map();      // session -> [{ ts, summary, tool, model }] (cap 50)
+  // Sessions that have left the world but whose trainer is still walking out.
+  // Each keeps its desk until it is through the door ('gone'). Not counted by
+  // agentCount(), and not clickable: the world entry is already gone.
+  const departing = new Map();  // session -> { trainer, name, slot, items, clock }
   const FEED_CAP = 50;
   let lastStatsDraw = 0;
   // Activity cues for the 3D camera director, drained by snapshot(). Bounded:
@@ -48,8 +55,39 @@ export function createRoom(project, deps) {
   // deterministically instead of under 'undefined'.
   const keyOf = (ev) => ev.session || ev.agent;
 
-  function recomputeDesks() {
-    assignment = assignDesks(Object.values(world.agents), ROLE_ORDER);
+  // Desks are stable: a live agent keeps the desk it has, and a trainer walking
+  // out holds its desk until it is through the door. Nothing is compacted when
+  // a desk frees, because no one would walk the trainer to its new desk.
+  // Agents without a desk (newcomers, overflow) take the lowest free desks,
+  // role order (assignDesks) deciding only among those. `prefer` maps a
+  // session to the desk it should get back if still free (a turn-round).
+  // Departers stay out of `assignment`.
+  function recomputeDesks(prefer = {}) {
+    const slots = {};
+    const taken = new Set([...departing.values()].map((d) => d.slot));
+    for (const [s, slot] of Object.entries(assignment.slots)) {
+      if (s in world.agents && !taken.has(slot)) { slots[s] = slot; taken.add(slot); }
+    }
+    for (const [s, slot] of Object.entries(prefer)) {
+      if (s in world.agents && !(s in slots) && !taken.has(slot)) { slots[s] = slot; taken.add(slot); }
+    }
+    const unseated = assignDesks(Object.values(world.agents).filter((a) => !(a.session in slots)), ROLE_ORDER);
+    const order = [...Object.keys(unseated.slots).sort((a, b) => unseated.slots[a] - unseated.slots[b]), ...unseated.overflow];
+    const free = [];
+    for (let i = 0; i < MAX_DESKS; i++) if (!taken.has(i)) free.push(i);
+    const overflow = [];
+    order.forEach((s, i) => { if (i < free.length) slots[s] = free[i]; else overflow.push(s); });
+    const wasOverflow = assignment.overflow;
+    assignment = { slots, overflow };
+    // An overflow agent promoted to a freed desk has no trainer (overflow is
+    // drawn only as "+N more"), and may not send another event for a long
+    // while: seat it now rather than leave the desk looking empty.
+    for (const s of wasOverflow) {
+      if (s in slots && !trainers.has(s)) {
+        trainers.set(s, createSeated(world.agents[s].name, deskStand(slots[s])));
+        frameClock.set(s, 0);
+      }
+    }
     if (assignment.overflow.length !== lastOverflow) {
       lastOverflow = assignment.overflow.length;
       // Log names alongside session ids: a bare session id is unreadable, and
@@ -114,12 +152,51 @@ export function createRoom(project, deps) {
   // guards against is exactly the one that stops events (and therefore
   // tickSim/render) from ever running for this room again.
   function doReap(nowMs) {
-    const before = Object.keys(world.agents);
+    const before = world.agents;
     world = reapStale(world, nowMs, REAP_AFTER_MS);
-    if (Object.keys(world.agents).length !== before.length) {
-      for (const session of before) if (!(session in world.agents)) purgeAgent(session);
+    const removed = departAll(before);
+    if (removed.length) {
       recomputeDesks();
+      for (const session of removed) deps.onRemoved?.(session);
     }
+  }
+
+  // Every way a session leaves the world (SessionEnd, reap, room restart,
+  // depart/dismiss) comes through here: its per-agent state is purged and, if
+  // it had a trainer at a desk, that trainer walks out holding the desk.
+  // `prev` is the world entry from before the removal.
+  function startDeparture(session, prev) {
+    const t = trainers.get(session);
+    const slot = slotFor(session);
+    const clock = frameClock.get(session) ?? 0;
+    purgeAgent(session);
+    if (!t || slot === undefined) return;
+    departing.set(session, {
+      trainer: leave(t, exitPath(t)), name: prev?.name ?? t.name, slot, clock,
+      items: (prev?.items ?? []).slice(-8).map((it) => it.tier),
+    });
+  }
+
+  // Remove one session from the world by hand and walk it out (depart/dismiss).
+  // `instant`: no walk-out — purged and its desk freed at once (a switch replayed
+  // from the reload snapshot, which would otherwise parade out on every reload).
+  function departSession(session, { instant = false } = {}) {
+    const prev = world.agents[session];
+    if (!prev) return null;
+    const agents = { ...world.agents };
+    delete agents[session];
+    world = { agents };
+    if (instant) purgeAgent(session);
+    else startDeparture(session, prev);
+    recomputeDesks();
+    return { main: prev.main === true };
+  }
+
+  // Diff the world against `beforeAgents` and walk out whatever left.
+  function departAll(beforeAgents) {
+    const removed = Object.keys(beforeAgents).filter((s) => !(s in world.agents));
+    for (const s of removed) startDeparture(s, beforeAgents[s]);
+    return removed;
   }
 
   function pushFeedLine(session, line) {
@@ -130,9 +207,12 @@ export function createRoom(project, deps) {
   }
 
   // Keyed by session; the trainer carries the display name for readability only.
-  function ensureTrainer(session, name, slot) {
+  // A genuinely new session walks in through the door; one this page is merely
+  // seeing for the first time (reload, bridge restart) is placed at its desk.
+  function ensureTrainer(session, name, slot, walkIn) {
     if (!trainers.has(session)) {
-      trainers.set(session, createTrainer(name, spawnPoint(slot ?? 0)));
+      const stand = deskStand(slot);
+      trainers.set(session, walkIn ? arrive(createTrainer(name, DOOR_OUTSIDE), arrivalPath(stand)) : createSeated(name, stand));
       frameClock.set(session, 0);
     }
     return trainers.get(session);
@@ -151,10 +231,14 @@ export function createRoom(project, deps) {
     if (now - lastStatsDraw > 250) { renderStats(Date.now()); lastStatsDraw = now; }
   }
 
-  // A desk monitor glows while its trainer is up and about. Shared by render()
+  // A desk monitor is on only while its trainer is working. Shared by render()
   // and snapshot() so the 2D screen and the 3D desk can never disagree.
   function isActive(t) {
-    return !!t && t.status !== 'idle' && t.status !== 'sleeping';
+    return !!t && isWorking(t);
+  }
+
+  function walkerMoving(t) {
+    return t.status === 'walking' || t.status === 'leaving';
   }
 
   // Callers get both: the session to key state by, the name to display. A
@@ -230,17 +314,25 @@ export function createRoom(project, deps) {
   return {
     project,
 
-    applyEvent(ev) {
+    // `arrive`: the session is genuinely new (SessionStart, or a switch from
+    // another room), so a first-seen trainer walks in instead of being seated.
+    applyEvent(ev, { arrive: walkIn = false } = {}) {
       const session = keyOf(ev);
+      const before = world.agents;
       world = applyWorldEvent(world, ev);
-      // SessionEnd removed the agent from the world — drop all its per-agent
-      // render/sim state too, then recompute desks so the freed slot is available.
-      // Nothing below should re-materialize a gone agent, so we stop here.
+      // SessionEnd, or the room-restart rule clearing a stale main session:
+      // whoever left the world walks out (holding its desk until through the
+      // door). Nothing below should re-materialize a gone agent, so a
+      // SessionEnd stops here.
+      const removed = departAll(before);
       if (ev.type === 'agent_shutdown') {
-        purgeAgent(session);
         recomputeDesks();
         return;
       }
+      // An event for a session that is walking out turns it round: it gives up
+      // the held desk and gets it straight back below (see recomputeDesks).
+      const returning = departing.get(session);
+      if (returning) departing.delete(session);
       stats = accumulate(stats, ev);
       const line = {
         ts: ev.ts, summary: ev.summary || ev.type, tool: ev.tool ?? null, model: ev.model ?? null,
@@ -266,12 +358,20 @@ export function createRoom(project, deps) {
         // only because a second session happens to share it.
         else if (!target && !selfAddressed) warnUnmirrored(ev.to);
       }
-      recomputeDesks();
+      recomputeDesks(returning ? { [session]: returning.slot } : {});
+      for (const s of removed) deps.onRemoved?.(s);
       const slot = slotFor(session);
       // Only materialize/track trainers that actually have a desk; overflow agents
       // are represented solely by the "+N more" indicator (no sim, no fx).
       if (slot !== undefined) {
-        ensureTrainer(session, ev.agent, slot);
+        if (returning) {
+          // trainer.onEvent ignores a leaving trainer, so re-point it at the
+          // desk first; the event below then lands on a walking trainer.
+          trainers.set(session, arrive(returning.trainer, returnPath(returning.trainer, deskStand(slot))));
+          frameClock.set(session, returning.clock);
+        } else {
+          ensureTrainer(session, ev.agent, slot, walkIn);
+        }
         trainers.set(session, onEvent(trainers.get(session), ev, deskStand(slot)));
         // A synthetic keepalive is not activity worth a camera cue.
         if (ev.type !== 'presence') {
@@ -296,12 +396,20 @@ export function createRoom(project, deps) {
       for (const [session, t] of trainers) {
         const slot = slotFor(session);
         if (slot === undefined) continue;
-        trainers.set(session, tick(t, dtMs, deskStand(slot), barracksBunkLie(slot)));
+        trainers.set(session, tick(t, dtMs, deskStand(slot)));
         frameClock.set(session, (frameClock.get(session) + dtMs) % 100000);
       }
+      // walkers heading out: their desk frees once they are through the door
+      let freed = false;
+      for (const [session, d] of departing) {
+        const t = tick(d.trainer, dtMs, deskStand(d.slot));
+        if (t.status === 'gone') { departing.delete(session); freed = true; continue; }
+        departing.set(session, { ...d, trainer: t, clock: (d.clock + dtMs) % 100000 });
+      }
+      if (freed) recomputeDesks();
     },
 
-    render(ctx, canvas, now, hour) {
+    render(ctx, canvas, now, hour, { reducedMotion = false } = {}) {
       const manifest = deps.manifest;
       const bundle = deps.bundle;
       const config = deps.config;
@@ -328,35 +436,28 @@ export function createRoom(project, deps) {
       ctx.fillStyle = `rgba(${sky[0]},${sky[1]},${sky[2]},0.5)`;
       for (const c of WINDOW_CELLS) ctx.fillRect(c.col * S, c.row * S, S, S);
 
-      // desks + beds + stacked items (cap 8 shown per desk)
-      for (const [session, a] of Object.entries(world.agents)) {
-        const slot = slotFor(session);
-        if (slot === undefined) continue;
+      // desks + stacked items (cap 8 shown per desk). A desk held by a trainer
+      // walking out is still drawn, its monitor off.
+      const drawDesk = (slot, t, tiers) => {
         const r = deskRect(slot);
         if (bundle && manifest) {
           for (const c of deskTileCells(slot)) drawTile(ctx, bundle, manifest, 'desk', c.col, c.row);
-          const t = trainers.get(session);
-          const active = isActive(t);
           const mx = Math.round(r.x + r.w / 2 - 6), my = r.y + 2;
           ctx.fillStyle = '#10151c'; ctx.fillRect(mx, my, 12, 8);          // bezel
-          ctx.fillStyle = active ? '#6ce67a' : '#33415a';                  // screen (glows when active)
+          ctx.fillStyle = screenColor({ active: isActive(t), now, slot, reducedMotion }); // screen
           ctx.fillRect(mx + 1, my + 1, 10, 6);
         } else {
           ctx.fillStyle = '#33415a'; ctx.fillRect(r.x, r.y, r.w, r.h);
         }
-        const shown = a.items.slice(-8);
-        shown.forEach((it, i) => drawItem(ctx, r.x + 8 + i * 5, r.y - 6, it.tier,
+        tiers.forEach((tier, i) => drawItem(ctx, r.x + 8 + i * 5, r.y - 6, tier,
           bundle ? { items: bundle.items, manifest } : {}));
+      };
+      for (const [session, a] of Object.entries(world.agents)) {
+        const slot = slotFor(session);
+        if (slot === undefined) continue;
+        drawDesk(slot, trainers.get(session), a.items.slice(-8).map((it) => it.tier));
       }
-
-      // barracks — a single shared row of bunks, drawn once per frame
-      // regardless of occupancy. Unlike desks (which only materialize once an
-      // agent is present), the barracks is a fixed room fixture agents walk to.
-      if (bundle && manifest) {
-        for (let i = 0; i < MAX_DESKS; i++) {
-          for (const c of barracksBunkTileCells(i)) drawTile(ctx, bundle, manifest, 'bed', c.col, c.row);
-        }
-      }
+      for (const d of departing.values()) drawDesk(d.slot, d.trainer, d.items);
 
       // trainers, y-sorted so lower ones overlap correctly
       const drawables = [];
@@ -371,21 +472,24 @@ export function createRoom(project, deps) {
       for (const [session, a] of Object.entries(world.agents)) {
         if (slotFor(session) === undefined) continue;
         const t = trainers.get(session);
-        if (t) drawables.push({ session, a, t });
+        if (t) drawables.push({ session, name: a.name, a, t, slot: slotFor(session), clock: frameClock.get(session) });
       }
+      // Walkers heading out are drawn like everyone else but carry no label or
+      // caption: they have left the world, and the census above does not count them.
+      for (const [session, d] of departing) drawables.push({ session, name: d.name, a: null, t: d.trainer, slot: d.slot, clock: d.clock });
       drawables.sort((p, q) => p.t.y - q.t.y);
 
       // ground-decal pass: all shadows sit under all sprites so no trainer's
       // shadow paints over a farther trainer's feet
       for (const { t } of drawables) drawTrainerShadow(ctx, t);
 
-      for (const { session, a, t } of drawables) {
+      for (const { session, name, a, t, slot, clock } of drawables) {
         // Sprite and colour stay keyed by the display NAME — config.agents is a
         // name map and a session id would never match it. Only identity/keying
         // moved to the session.
-        const color = colorForAgent(a.name, slotFor(session), config);
-        const sheet = bundle ? bundle.characters[resolveSprite(a.name, config)] : null;
-        drawTrainer(ctx, t, { color, sheet, dir: t.dir, manifest, frame: frameFor(t.status, frameClock.get(session)) });
+        const color = colorForAgent(name, slot, config);
+        const sheet = bundle ? bundle.characters[resolveSprite(name, config)] : null;
+        drawTrainer(ctx, t, { color, sheet, dir: t.dir, manifest, frame: frameFor(t.status, clock) });
 
         // name label — the human-readable name, never the raw session id ALONE.
         // When a name is held by more than one session the short id is appended,
@@ -396,18 +500,15 @@ export function createRoom(project, deps) {
         // the same string under the desk. A sole holder stays a bare name — the
         // common case must not pick up an id it has no need for.
         // A visited lab (presenceOnly) paints neither: no names, no captions.
-        if (deps.presenceOnly !== true) {
+        if (a && deps.presenceOnly !== true) {
           const label = trainerLabel(a.name, session, nameCounts);
           ctx.fillStyle = color; ctx.font = '7px ui-monospace'; ctx.textAlign = 'center';
           ctx.fillText(label, t.x, t.y - 20);
 
-          // speech bubble while active (never over a sleeping / bed-bound trainer)
+          // speech bubble while active (never over an idle trainer)
           const cap = captionFor(t, a);
           if (cap) drawBubble(ctx, cap, t.x, t.y - 16, { charW: 4 });
         }
-
-        // sleeping indicator
-        if (t.status === 'sleeping') drawBubble(ctx, 'Zzz', t.x, t.y - 18, { charW: 4 });
 
         // celebrations (already pruned above)
         const list = fxByAgent.get(session);
@@ -439,20 +540,30 @@ export function createRoom(project, deps) {
       const presence = deps.presenceOnly === true;
       const census = nameCensus(world.agents);
       const desks = [], trainersOut = [], celebrations = [];
+      const trainerEntry = (session, name, slot, t, phaseMs, { label, caption }) => ({
+        session, name: presence ? '' : name, label,
+        labelColor: colorForAgent(name, slot, config),
+        role: resolveSprite(name, config),
+        color: presence ? colorForAgent(name, slot, config) : (config?.agents?.[name]?.color ?? null),
+        slot, x: t.x, y: t.y, dir: t.dir, status: t.status, caption, phaseMs,
+      });
       for (const [session, a] of Object.entries(world.agents)) {
         const slot = slotFor(session);
         if (slot === undefined) continue;
         const t = trainers.get(session);
         desks.push({ slot, session, active: isActive(t), items: a.items.slice(-8).map((it) => it.tier) });
-        if (t) trainersOut.push({
-          session, name: presence ? '' : a.name, label: presence ? '' : trainerLabel(a.name, session, census),
-          labelColor: colorForAgent(a.name, slot, config),
-          role: resolveSprite(a.name, config),
-          color: presence ? colorForAgent(a.name, slot, config) : (config?.agents?.[a.name]?.color ?? null),
-          slot, x: t.x, y: t.y, dir: t.dir, status: t.status,
-          caption: presence ? null : captionFor(t, a), phaseMs: frameClock.get(session) ?? 0,
-        });
+        if (t) trainersOut.push(trainerEntry(session, a.name, slot, t, frameClock.get(session) ?? 0, {
+          label: presence ? '' : trainerLabel(a.name, session, census),
+          caption: presence ? null : captionFor(t, a),
+        }));
         for (const fx of fxByAgent.get(session) ?? []) celebrations.push({ session, x: fx.x, y: fx.y, progress: celebrationProgress(fx, now) });
+      }
+      // A walker heading out still holds its desk (monitor off) and is drawn,
+      // but has left the world, so it carries no label or caption.
+      for (const [session, d] of departing) {
+        const t = d.trainer;
+        desks.push({ slot: d.slot, session, active: false, items: d.items.slice() });
+        trainersOut.push(trainerEntry(session, d.name, d.slot, t, d.clock, { label: '', caption: null }));
       }
       desks.sort((p, q) => p.slot - q.slot);
       return {
@@ -476,7 +587,18 @@ export function createRoom(project, deps) {
     // is the bridge back to something a human can read.
     agentSessions() { return Object.keys(world.agents); },
 
+    // World agents only: a trainer walking out no longer counts.
     agentCount() { return Object.keys(world.agents).length; },
+
+    // True once the last trainer is through the door.
+    isEmpty() { return Object.keys(world.agents).length === 0 && departing.size === 0; },
+
+    // Someone is walking in, out or between desks, so the room must keep ticking.
+    hasMotion() {
+      for (const t of trainers.values()) if (walkerMoving(t)) return true;
+      for (const d of departing.values()) if (walkerMoving(d.trainer)) return true;
+      return false;
+    },
 
     nameOf(session) { return world.agents[session]?.name ?? ''; },
 
@@ -493,17 +615,18 @@ export function createRoom(project, deps) {
       return best ? best.session : null;
     },
 
+    // The caller takes a session out of this room (a project switch): it walks
+    // out through the door, holding its desk until it is through. Returns the
+    // session's main flag so the caller can carry it over, or null if unknown.
+    // Not reported through deps.onRemoved: the caller already knows.
+    // `{ instant: true }` skips the walk-out (see departSession).
+    depart(session, opts) { return departSession(session, opts); },
+
     // Escape hatch: a main session is reap-exempt for 72h, so one whose
-    // SessionEnd never arrived would sleep in the barracks until then. This
-    // removes it by hand.
+    // SessionEnd never arrived would keep its seat until then. This walks it
+    // out by hand.
     dismiss(session) {
-      if (!world.agents[session]) return false;
-      const agents = { ...world.agents };
-      delete agents[session];
-      world = { agents };
-      purgeAgent(session);
-      recomputeDesks();
-      return true;
+      return departSession(session) !== null;
     },
 
     feedFor(session) { return feeds.get(session) ?? []; },

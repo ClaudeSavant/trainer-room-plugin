@@ -207,7 +207,7 @@ export function createRenderer3d({ reducedMotion = () => false, onContextLost = 
       if (!r || disposed) return;
       const dt = r.last == null ? 16 : Math.min(MAX_STEP_MS, now - r.last);
       r.last = now;
-      r.rs.sync(snapshot, now);
+      r.rs.sync(snapshot, now, { reducedMotion: reducedMotion() });
       const q = qualityFor(mode);
       r.rs.setShadows(q.shadows);
       gl.shadowMap.enabled = q.shadows; // part of three's program cache key: no manual recompile needed

@@ -2,7 +2,7 @@ const TIERS = { tool_call: 'token', file_write: 'doc', task_done: 'parcel', comm
 
 // Defense-in-depth: agents whose `agent_shutdown` (SessionEnd) never arrives are
 // reaped after this much wall-clock silence. Deliberately far longer than any
-// legitimate idle/sleep stretch (see IDLE_AFTER_MS/SLEEPY_AFTER_MS in trainer.mjs)
+// legitimate idle stretch (see IDLE_AFTER_MS in trainer.mjs)
 // so it only ever removes genuinely abandoned agents.
 export const REAP_AFTER_MS = 45 * 60 * 1000;
 
@@ -48,6 +48,19 @@ export function applyEvent(world, ev) {
     return { agents };
   }
 
+  // A brand-new main session means the user has moved on: any other main in
+  // this room that has been silent past the reap threshold is a leftover from a
+  // session that never sent SessionEnd, so clear it now instead of waiting 72h.
+  // `main !== false`, not `=== true`: a SessionStart usually fires before the
+  // transcript is readable, so it arrives as agent 'unknown' with `main`
+  // omitted. Only a session that positively states it is a teammate is exempt.
+  if (ev.type === 'agent_start' && ev.main !== false && !(key in agents)) {
+    const t = Date.parse(ev.ts);
+    for (const [k, a] of Object.entries(agents)) {
+      if (a.main && Number.isFinite(t) && t - a.lastEventTs > REAP_AFTER_MS) delete agents[k];
+    }
+  }
+
   const prev = agents[key] ?? newAgent(key, ev.agent, ev.team, Object.keys(agents).length, ev.main);
   const ts = Date.parse(ev.ts);
   const a = {
@@ -86,9 +99,9 @@ export function applyEvent(world, ev) {
 export function reapStale(world, nowMs, thresholdMs = REAP_AFTER_MS) {
   const agents = {};
   for (const [key, a] of Object.entries(world.agents)) {
-    // Two tiers, both bounded (see MAIN_REAP_AFTER_MS): the main session sleeps
-    // in the barracks through a long quiet stretch rather than disappearing,
-    // but a crashed one is not immortal. An agent whose timestamp never parsed
+    // Two tiers, both bounded (see MAIN_REAP_AFTER_MS): the main session stays
+    // through a long quiet stretch rather than disappearing, but a crashed one
+    // is not immortal. An agent whose timestamp never parsed
     // is kept on either tier — an unknown age is not evidence of staleness.
     const limit = a.main ? MAIN_REAP_AFTER_MS : thresholdMs;
     if (Number.isFinite(a.lastEventTs) && nowMs - a.lastEventTs > limit) continue;

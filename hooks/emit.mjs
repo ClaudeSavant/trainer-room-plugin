@@ -44,24 +44,20 @@ async function main() {
     // "no evidence", which the client reads as "leave the session as it was";
     // forcing undefined to false would assert teammate-ness on a failed read.
     ...(id.main !== undefined ? { main: id.main === true } : {}),
+    // A Task subagent's hooks carry its PARENT's session_id, so without this
+    // its worktree or scratch-dir cwd would drag the parent between rooms.
+    // Stamped only when true, like projectLabel. agent_id, not agent_type:
+    // agent_type is also set on a MAIN session started with `claude --agent`.
+    ...(payload.agent_id ? { sub: true } : {}),
     tokens: id.tokens,
     turnId: id.turnId,
-    // Only on SessionStart, where cwd still equals the launch dir. The slug is
-    // opaque and cannot be unslugified, so this is the one chance to capture a
-    // human-readable name; the client caches it against the slug. Guarded on
-    // typeof rather than coerced — String() throws on a JSON object with a
-    // non-callable toString, and emit swallows everything, so that would drop
-    // the whole event rather than just the label.
-    //
-    // NO_PROJECT is excluded because it is a SHARED room: every session launched
-    // from / or $HOME lands in it. hooks/project.mjs collapses those precisely to
-    // stop junk rooms named after the home folder or 'scratchpad', and the client
-    // caches one label per slug — so labelling it here re-imports the junk names
-    // a layer up, and the room's tab flips to whichever degenerate session
-    // started last.
-    ...(payload.hook_event_name === 'SessionStart' && typeof payload.cwd === 'string' && payload.cwd
-      && project !== NO_PROJECT
-      ? { projectLabel: basename(payload.cwd) } : {}),
+    // Only on SessionStart: the client caches it against the room key, which is
+    // the project root path. basename(project) names the root, not whatever
+    // subfolder the session happened to start in. NO_PROJECT is excluded
+    // because it is a SHARED room (sessions at / or $HOME), and a label would
+    // flip to whichever of them started last.
+    ...(payload.hook_event_name === 'SessionStart' && project !== NO_PROJECT
+      ? { projectLabel: basename(project) } : {}),
     ...(base.detail !== undefined ? { detail: base.detail } : {}),
     ...(base.to !== undefined ? { to: base.to } : {}),
   };

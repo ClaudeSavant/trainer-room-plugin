@@ -25,11 +25,6 @@ export function frameRect(dir, frame, manifest) {
   return { sx: frame * frameW, sy: row * frameH, sw: frameW, sh: frameH };
 }
 
-export function sleepRect(manifest) {
-  const { frameW, frameH, sleepRow } = manifest.characters;
-  return { sx: 0, sy: sleepRow * frameH, sw: frameW, sh: frameH };
-}
-
 export function drawTrainerShadow(ctx, t) {
   ctx.save();
   ctx.translate(t.x, t.y + 8); // feet
@@ -46,7 +41,7 @@ export function drawTrainer(ctx, t, { color, frame, sheet, dir, manifest } = {})
   ctx.save();
   ctx.translate(t.x, t.y);
   if (sheet && manifest) {
-    const r = t.status === 'sleeping' ? sleepRect(manifest) : frameRect(dir ?? t.dir, frame ?? 0, manifest);
+    const r = frameRect(dir ?? t.dir, frame ?? 0, manifest);
     ctx.drawImage(sheet, r.sx, r.sy, r.sw, r.sh, -r.sw / 2, -r.sh + 8, r.sw, r.sh);
   } else { // fallback (kept from v1 so early integration/tests still render)
     ctx.fillStyle = color || '#4aa3ff';

@@ -4,6 +4,7 @@
 import * as THREE from '../vendor/three.module.min.js';
 import { deskRect } from '../engine/layout.mjs';
 import { pxToWorld, TILE_PX } from './coords.mjs';
+import { SCREEN } from '../engine/monitor.mjs';
 import { DESK_TOP_Y } from './lab-layout.mjs';
 
 export const MAX_ITEMS = 8;
@@ -23,7 +24,6 @@ const G = {
 };
 // Same tier colours as the 2D fallback items (sprites.mjs TIER_COLOR).
 const ITEM_COLOR = { token: '#cfd8e3', doc: '#8ecbff', parcel: '#d8a25a', deliverable: '#d93a3a' };
-const SCREEN_ON = '#7fe0ff', SCREEN_OFF = '#33415a';
 
 // Renderer teardown: the 3D path is one-way, so nothing builds from G again.
 export function disposeSharedDesks() { for (const g of Object.values(G)) g.dispose(); }
@@ -46,7 +46,7 @@ export function createDesk(slot, mats) {
   add(G.body, mats.std('#8a5a2e'), W / 2, 0.33, D * 0.45);
   add(G.monitor, mats.std('#2b2f3a'), W / 2, 1.15, D * 0.3);
   add(G.stand, mats.std('#3a3f4c'), W / 2, 0.86, D * 0.3);
-  const screen = add(G.screen, mats.basic(SCREEN_OFF), W / 2, 1.16, D * 0.3 + 0.045);
+  const screen = add(G.screen, mats.basic(SCREEN.off), W / 2, 1.16, D * 0.3 + 0.045);
   screen.castShadow = false;
   add(G.keyboard, mats.std('#3a3f4c'), W / 2, 0.8, D * 0.65);
   const items = new THREE.Group();
@@ -56,7 +56,7 @@ export function createDesk(slot, mats) {
   return {
     group,
     screen,
-    setActive(active) { screen.material = mats.basic(active ? SCREEN_ON : SCREEN_OFF); },
+    setScreen(color) { screen.material = mats.basic(color); },
     setItems(tiers) {
       const shown = tiers.slice(-MAX_ITEMS);
       const key = shown.join(',');

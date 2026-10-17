@@ -14,10 +14,6 @@ export const OUTFITS = {
 export const TRAINER_SCALE = 1.0;
 export const HEAD_Y = 1.38; // skull centre height above the root
 
-// A sleeper's head may sink this far below its back into the pillow: the
-// sheet top (0.45) less the bunk frame top (0.35), less a hair.
-const HEAD_SINK = 0.09;
-
 export function outfitFor(role, color = null) {
   const base = OUTFITS[role] ?? OUTFITS.npc;
   return color ? { ...base, shirt: color } : base;
@@ -26,16 +22,15 @@ export function outfitFor(role, color = null) {
 // Pure pose curve, kept apart from the meshes so it is testable.
 export function poseFor(status, timeMs) {
   const t = timeMs / 1000;
-  if (status === 'walking') {
+  if (status === 'walking' || status === 'leaving') {
     const s = Math.sin(t * 9) * 0.6;
-    return { leg: s, armL: -s, armR: s, bob: Math.abs(Math.sin(t * 9)) * 0.04, lying: false };
+    return { leg: s, armL: -s, armR: s, bob: Math.abs(Math.sin(t * 9)) * 0.04 };
   }
   if (status === 'working' || status === 'producing') {
     const ty = Math.sin(t * 14) * 0.15;
-    return { leg: 0, armL: -1.1 + ty, armR: -1.1 - ty, bob: 0, lying: false };
+    return { leg: 0, armL: -1.1 + ty, armR: -1.1 - ty, bob: 0 };
   }
-  if (status === 'sleeping') return { leg: 0, armL: 0, armR: 0, bob: 0, lying: true };
-  return { leg: 0, armL: 0, armR: 0, bob: Math.max(0, Math.sin(t * 2)) * 0.02, lying: false };
+  return { leg: 0, armL: 0, armR: 0, bob: Math.max(0, Math.sin(t * 2)) * 0.02 };
 }
 
 const G = {
@@ -74,7 +69,7 @@ export function disposeSharedChibi() { for (const g of Object.values(G)) g.dispo
 
 export function createChibi(outfit, mats) {
   const root = new THREE.Group();   // placed and turned by the room scene
-  const body = new THREE.Group();   // bobs, and tips over when lying down
+  const body = new THREE.Group();   // bobs
   body.name = 'body';
   const shadow = new THREE.Mesh(G.shadow, mats.shadow());
   shadow.name = 'shadow';
@@ -97,8 +92,7 @@ export function createChibi(outfit, mats) {
     tie.rotation.x = -0.25;
     body.add(tie);
   }
-  // The head and its gear move together so a sleeper's pillow can lift them
-  // without tilting the body.
+  // The head and its gear are one group.
   const head = new THREE.Group();
   head.name = 'head';
   body.add(head);
@@ -120,21 +114,6 @@ export function createChibi(outfit, mats) {
     head.add(hood);
   }
   if (outfit.glasses) for (const x of [-0.15, 0.15]) head.add(part(G.lens, mats.std('#111111'), x, 1.38, 0.4));
-  // Lying flat (owner ruling: at most 3 degrees of tilt). The big head and its
-  // gear reach further behind the body than the torso does, so the body is
-  // lifted until the torso's back, not the head, sits at the root's origin
-  // (the sheet), and the pillow lifts the head just far enough that its
-  // lowest point sinks no more than HEAD_SINK below the back. A lift, not a
-  // nod: nodding swings the head toward the feet and off the pillow.
-  // Measured once here because the head gear and torso differ per outfit.
-  body.rotation.x = -Math.PI / 2;
-  root.updateMatrixWorld(true);
-  const backBox = new THREE.Box3();
-  for (const o of body.children) if (o !== head) backBox.expandByObject(o, true);
-  const lieLift = -backBox.min.y;
-  const headLow = new THREE.Box3().setFromObject(head, true).min.y;
-  const headRaise = Math.max(0, backBox.min.y - HEAD_SINK - headLow);
-  body.rotation.x = 0;
   root.scale.setScalar(TRAINER_SCALE);
 
   function applyPose(p) {
@@ -142,13 +121,7 @@ export function createChibi(outfit, mats) {
     legs[1].rotation.x = -p.leg;
     arms[0].rotation.x = p.armL;
     arms[1].rotation.x = p.armR;
-    body.position.y = p.lying ? lieLift : p.bob;
-    // Lying: face up, head toward -Z in root space; the room scene turns the
-    // root so the head lands on the bunk's pillow and lifts the root to the
-    // mattress top.
-    body.rotation.x = p.lying ? -Math.PI / 2 : 0;
-    head.position.z = p.lying ? headRaise : 0; // body +Z is up when lying
-    shadow.visible = !p.lying;
+    body.position.y = p.bob;
   }
   return { root, legs, arms, applyPose };
 }

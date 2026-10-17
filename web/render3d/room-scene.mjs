@@ -6,17 +6,12 @@ import { deskRect } from '../engine/layout.mjs';
 import { labLayout, DESK_TOP_Y } from './lab-layout.mjs';
 import { buildLab, disposeLab, updateLabFx } from './lab.mjs';
 import { createDesk } from './desks.mjs';
-import { createChibi, outfitFor, poseFor, TRAINER_SCALE } from './chibi.mjs';
+import { createChibi, outfitFor, poseFor } from './chibi.mjs';
+import { screenColor } from '../engine/monitor.mjs';
 import { createCelebration3d } from './fx3d.mjs';
 import { lightingParams } from './lighting.mjs';
 import { pxToWorld, yawFor, TILE_PX } from './coords.mjs';
 
-// A lying chibi's back sits at its root's origin (chibi.mjs; the head may sink lower into the pillow), so
-// the root goes on the bunk sheet's top (0.45), plus a hair against z-fighting.
-const LYING_Y = 0.46;
-// Feet sit this far +X of the lie point (the bunk centre): a flat sleeper is
-// 1.89 long head gear to toes, so this centres it on the 1.8 frame.
-export const LYING_SHIFT = 0.965;
 const DESK_HALF_D = deskRect(0).h / TILE_PX / 2;
 
 export function createRoomScene(mats, layout = labLayout()) {
@@ -64,13 +59,13 @@ export function createRoomScene(mats, layout = labLayout()) {
     }
   }
 
-  function syncDesks(list) {
+  function syncDesks(list, timeMs, reducedMotion) {
     const live = new Set(list.map((d) => d.slot));
     for (const [slot, d] of desks) if (!live.has(slot)) { scene.remove(d.group); desks.delete(slot); }
     for (const d of list) {
       let desk = desks.get(d.slot);
       if (!desk) { desk = createDesk(d.slot, mats); desks.set(d.slot, desk); scene.add(desk.group); }
-      desk.setActive(d.active);
+      desk.setScreen(screenColor({ active: d.active, now: timeMs, slot: d.slot, reducedMotion }));
       desk.setItems(d.items);
     }
   }
@@ -95,8 +90,8 @@ export function createRoomScene(mats, layout = labLayout()) {
       const { X, Z } = pxToWorld(t.x, t.y);
       positions.set(t.session, { X, Z });
       const root = e.chibi.root;
-      if (pose.lying) { root.position.set(X + LYING_SHIFT * TRAINER_SCALE, LYING_Y, Z); root.rotation.y = Math.PI / 2; }
-      else { root.position.set(X, 0, Z); root.rotation.y = yawFor(t.dir); }
+      root.position.set(X, 0, Z);
+      root.rotation.y = yawFor(t.dir);
     }
   }
 
@@ -120,10 +115,10 @@ export function createRoomScene(mats, layout = labLayout()) {
   return {
     scene,
     sun,
-    sync(snapshot, timeMs) {
+    sync(snapshot, timeMs, { reducedMotion = false } = {}) {
       relight(snapshot.hour);
       updateLabFx(lab.fx, timeMs);
-      syncDesks(snapshot.desks);
+      syncDesks(snapshot.desks, timeMs, reducedMotion);
       syncTrainers(snapshot.trainers);
       syncCelebrations(snapshot.celebrations);
     },

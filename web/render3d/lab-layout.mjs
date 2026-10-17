@@ -3,17 +3,16 @@
 // testable half of the lab; lab.mjs turns it into meshes.
 import { ROOM } from '../engine/room.mjs';
 import { floorTileFor } from '../engine/floor.mjs';
-import { MAX_DESKS, barracksBunkRect } from '../engine/layout.mjs';
 import { pxToWorld, TILE_PX } from './coords.mjs';
 
 export const WALL_H = 2.8;
 export const SHELF_H = 1.9;
-// The front shelf is cut to knee height so the camera can see the barracks.
+// The front shelf is cut to knee height so the camera can see over it into the room.
 export const FRONT_SHELF_H = 0.45;
 export const DESK_TOP_Y = 0.78;
 
 // Tiles that are architecture, not walkable floor.
-const STRUCTURAL = new Set(['wall', 'machine', 'window', 'bookshelf']);
+const STRUCTURAL = new Set(['wall', 'machine', 'window', 'bookshelf', 'door']);
 
 function extent(cells) {
   if (!cells.length) return null;
@@ -32,6 +31,7 @@ export function labLayout(room = ROOM) {
       if (!blocked.has(`${col},${row}`)) floor.push({ col, row, variant: floorTileFor(col, row, variants) });
   const shelves = pick('bookshelf');
   const lastCol = room.cols - 1, lastRow = room.rows - 1;
+  const doorCells = pick('door');
   return {
     cols: room.cols, rows: room.rows,
     floor,
@@ -40,13 +40,11 @@ export function labLayout(room = ROOM) {
     consoles: pick('console'),
     shelves: {
       left: extent(shelves.filter((c) => c.col === 0)),
-      right: extent(shelves.filter((c) => c.col === lastCol)),
-      front: extent(shelves.filter((c) => c.row === lastRow && c.col !== 0 && c.col !== lastCol)),
+      // The front row owns the corner cell, so the right shelf stops above it.
+      right: extent(shelves.filter((c) => c.col === lastCol && c.row !== lastRow)),
+      front: extent(shelves.filter((c) => c.row === lastRow && c.col !== 0)),
     },
-    bunks: Array.from({ length: MAX_DESKS }, (_, slot) => {
-      const b = barracksBunkRect(slot);
-      const p = pxToWorld(b.x, b.y);
-      return { slot, X: p.X, Z: p.Z, w: b.w / TILE_PX, d: b.h / TILE_PX };
-    }),
+    // Top-left of the door gap in the right wall, and its depth in tiles.
+    door: doorCells.length ? { ...pxToWorld(doorCells[0].col * TILE_PX, Math.min(...doorCells.map((c) => c.row)) * TILE_PX), d: doorCells.length } : null,
   };
 }

@@ -147,33 +147,24 @@ export function buildLab(layout, mats) {
     group.add(box(0.3, 0.08, 0.02, cross, col + 0.5, 0.55, row + 0.91), box(0.08, 0.3, 0.02, cross, col + 0.5, 0.55, row + 0.91));
   }
 
-  // Barracks: 8 bunks, instanced per part. Pillow on the -X end (head side),
-  // long enough to reach a flat sleeper's head (room-scene LYING_SHIFT).
-  const bunkParts = [
-    { name: 'bunk-frame', geo: boxGeo(BUNK_FRAME_LEN, 0.35, BUNK_FRAME_D), mat: mats.std('#6e4a30'), dx: 0, y: 0.175 },
-    { name: 'bunk-sheet', geo: boxGeo(1.3, 0.1, 0.8), mat: mats.std('#e8e2d0'), dx: 0.15, y: 0.4 },
-    { name: 'bunk-pillow', geo: boxGeo(PILLOW_LEN, 0.12, 0.6), mat: mats.std('#ffffff'), dx: PILLOW_DX, y: 0.42 },
-  ];
-  for (const p of bunkParts) {
-    const inst = new THREE.InstancedMesh(p.geo, p.mat, layout.bunks.length);
-    layout.bunks.forEach((b, i) => inst.setMatrixAt(i, m4.makeTranslation(b.X + b.w / 2 + p.dx, p.y, b.Z + b.d / 2)));
-    inst.castShadow = true;
-    inst.receiveShadow = true;
-    inst.name = p.name;
-    owned.push(inst);
-    group.add(inst);
+  // Door: a frame and a closed panel in the right wall's gap. The frame's room-facing
+  // face sits on the wall plane (X = door.X), like the shelf spines beside
+  // it; the panel stands 0.04 proud of it so the two never share a plane.
+  if (layout.door) {
+    const { X, Z, d } = layout.door;
+    const door = new THREE.Group();
+    door.name = 'door';
+    const z = Z + d / 2;
+    door.add(box(0.3, SHELF_H, d, mats.std('#3d2816'), X + 0.15, SHELF_H / 2, z, 'door-frame'));
+    door.add(box(0.1, SHELF_H - 0.12, d - 0.2, mats.std('#5a3b22'), X + 0.01, (SHELF_H - 0.12) / 2, z, 'door-panel'));
+    door.add(box(0.08, 0.08, 0.08, mats.std('#d9b44a'), X - 0.08, 0.95, Z + d - 0.35, 'door-knob'));
+    group.add(door);
   }
   return { group, fx, owned };
 }
 
-// Bunk dimensions the sleeper tests measure against (X is the long axis).
-export const BUNK_FRAME_LEN = 1.8;
-export const BUNK_FRAME_D = 0.9;
-export const PILLOW_LEN = 0.5;
-export const PILLOW_DX = -0.6;
-
 // Frees what buildLab made for this room only (window material, shelf spine
-// textures and materials, the floor/bunk instance buffers). Shared geometry and cached materials stay alive for
+// textures and materials, the floor instance buffers). Shared geometry and cached materials stay alive for
 // the other rooms.
 export function disposeLab(lab) {
   for (const r of lab.owned) r.dispose();

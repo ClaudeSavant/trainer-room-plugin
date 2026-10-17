@@ -27,36 +27,6 @@ export function deskTileCells(i) {
   return cells;
 }
 
-const BED_TC = 2, BED_TR = 1;                 // bunk: 2 tiles wide, 1 tall (horizontal) — reused from the old per-desk bed size
-const BARRACKS_ROW = 10;                      // last open floor row before the bottom wall (room row 11)
-const BARRACKS_ORIGIN_C = 2;                  // mirrors the desk grid's own ORIGIN_C
-
-// One shared barracks: a single row of MAX_DESKS bunks, indexed by the same
-// slot a desk uses (slot N's desk holder sleeps at bunk N) — no separate
-// allocation system. Strip runs col2-17 (16 tiles for 8 bunks x 2 tiles wide),
-// inside the col1-18 usable interior (bookshelf walls sit at col0/col19).
-function barracksBunkCell(i) {
-  return { c: BARRACKS_ORIGIN_C + i * BED_TC, r: BARRACKS_ROW };
-}
-
-export function barracksBunkRect(i) {
-  const { c, r } = barracksBunkCell(i);
-  return { x: c * TILE, y: r * TILE, w: BED_TC * TILE, h: BED_TR * TILE };
-}
-
-export function barracksBunkTileCells(i) {
-  const { c, r } = barracksBunkCell(i);
-  const cells = [];
-  for (let dr = 0; dr < BED_TR; dr++)
-    for (let dc = 0; dc < BED_TC; dc++) cells.push({ col: c + dc, row: r + dr });
-  return cells;
-}
-
-export function barracksBunkLie(i) {
-  const b = barracksBunkRect(i);
-  return { x: b.x + b.w / 2, y: b.y + b.h / 2 };
-}
-
 export function deskSlotAt(px, py) {
   for (let i = 0; i < MAX_DESKS; i++) {
     const r = deskRect(i);
@@ -70,9 +40,48 @@ export function deskStand(i) {
   return { x: r.x + r.w / 2, y: r.y + r.h + 14 };
 }
 
-export function spawnPoint(i) {
-  const r = deskRect(i);
-  return { x: r.x + r.w / 2, y: r.y + r.h + 48 };
+// The aisle is the walkway below the desk stands; the door is in the right wall.
+export const AISLE_Y = 160;
+export const DOOR_INSIDE = { x: 296, y: 160 };
+export const DOOR_OUTSIDE = { x: 304, y: 160 };   // the door plane: col 19's left edge
+
+// Vertical legs run up the gap just right of a desk column (x = 88/152/216/280),
+// never straight up from the aisle: a top-row stand sits directly above a
+// bottom-row desk. `gapRightOf(x)` is the first gap at or right of x; past the
+// last column every x is already clear of the desks.
+const GAP_OFFSET = DESK_W + 8;
+function gapRightOf(x) {
+  for (let col = 0; col < COLS; col++) {
+    const gx = (ORIGIN_C + col * PITCH_C) * TILE + GAP_OFFSET;
+    if (gx >= x) return gx;
+  }
+  return x;
+}
+
+// From anywhere on a walk to the aisle: sideways to the gap, then down it.
+// Already in the aisle: nothing to do.
+function toAisle(from) {
+  if (from.y === AISLE_Y) return [];
+  const gx = gapRightOf(from.x);
+  return [{ x: gx, y: from.y }, { x: gx, y: AISLE_Y }];
+}
+
+// From the aisle to a stand: up the gap right of its desk, then sideways.
+function fromAisle(stand) {
+  const gx = gapRightOf(stand.x);
+  return [{ x: gx, y: AISLE_Y }, { x: gx, y: stand.y }, { ...stand }];
+}
+
+export function arrivalPath(stand) {
+  return [{ ...DOOR_INSIDE }, ...fromAisle(stand)];
+}
+
+export function exitPath(from) {
+  return [...toAisle(from), { ...DOOR_INSIDE }, { ...DOOR_OUTSIDE }];
+}
+
+export function returnPath(from, stand) {
+  return [...toAisle(from), ...fromAisle(stand)];
 }
 
 // Identity is the session; the NAME is only a role hint for ordering, so two
